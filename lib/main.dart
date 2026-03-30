@@ -215,6 +215,7 @@ class _HomePageState extends State<HomePage> {
 
     // ② 銘柄追加
     AddStockPage(
+      watchList: watchList,
       onAdd: (value) {
         setState(() {
           watchList.addAll(value);
@@ -268,8 +269,9 @@ class _HomePageState extends State<HomePage> {
 // ⭐ 銘柄追加画面（少し改造）
 class AddStockPage extends StatefulWidget {
   final Function(List<String>) onAdd;
+  final List<String> watchList; // ⭐ 追加
 
-  const AddStockPage({super.key, required this.onAdd});
+  const AddStockPage({super.key, required this.onAdd, required this.watchList});
 
   @override
   State<AddStockPage> createState() => _AddStockPageState();
@@ -290,6 +292,13 @@ class _AddStockPageState extends State<AddStockPage> {
   List<String> selectedStocks = [];
 
   void search(String keyword) {
+    if (keyword.isEmpty) {
+      setState(() {
+        filteredStocks = []; // ⭐ 空なら何も出さない
+      });
+      return;
+    }
+
     setState(() {
       filteredStocks = allStocks
           .where((stock) => stock.contains(keyword))
@@ -298,6 +307,9 @@ class _AddStockPageState extends State<AddStockPage> {
   }
 
   void toggleSelect(String stock) {
+    // ⭐ すでに登録済みは無視
+    if (widget.watchList.contains(stock)) return;
+
     setState(() {
       if (selectedStocks.contains(stock)) {
         selectedStocks.remove(stock);
@@ -307,10 +319,8 @@ class _AddStockPageState extends State<AddStockPage> {
     });
   }
 
-  // ⭐ 修正：シンプルに即追加
   void handleAdd() {
     widget.onAdd(selectedStocks);
-    Navigator.pop(context);
   }
 
   @override
@@ -319,7 +329,6 @@ class _AddStockPageState extends State<AddStockPage> {
       padding: const EdgeInsets.all(20),
       child: Column(
         children: [
-          // 入力
           TextField(
             controller: controller,
             onChanged: search,
@@ -331,22 +340,30 @@ class _AddStockPageState extends State<AddStockPage> {
 
           const SizedBox(height: 20),
 
-          // 検索結果
           Expanded(
             child: ListView.builder(
               itemCount: filteredStocks.length,
               itemBuilder: (context, index) {
                 final stock = filteredStocks[index];
+
                 final isSelected = selectedStocks.contains(stock);
+                final isAlreadyAdded = widget.watchList.contains(stock);
 
                 return ListTile(
                   title: Text(stock),
+
+                  // ⭐ 状態分岐
                   trailing: Icon(
-                    isSelected
+                    isAlreadyAdded
+                        ? Icons
+                              .check_box // 既に登録済み
+                        : isSelected
                         ? Icons.check_box
                         : Icons.check_box_outline_blank,
                   ),
-                  onTap: () => toggleSelect(stock),
+
+                  // ⭐ 登録済みは押せない
+                  onTap: isAlreadyAdded ? null : () => toggleSelect(stock),
                 );
               },
             ),
@@ -354,11 +371,8 @@ class _AddStockPageState extends State<AddStockPage> {
 
           const SizedBox(height: 10),
 
-          // ⭐ 追加ボタン
           ElevatedButton(
-            onPressed: selectedStocks.isNotEmpty
-                ? handleAdd
-                : null, // ← 未選択なら無効
+            onPressed: selectedStocks.isNotEmpty ? handleAdd : null,
             child: const Text("追加"),
           ),
         ],
