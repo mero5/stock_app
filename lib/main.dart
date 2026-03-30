@@ -1,121 +1,367 @@
 import 'package:flutter/material.dart';
+import 'package:amplify_flutter/amplify_flutter.dart';
+import 'package:amplify_auth_cognito/amplify_auth_cognito.dart';
+import 'amplifyconfiguration.dart';
 
 void main() {
-  runApp(const MyApp());
+  runApp(const StockApp());
 }
 
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+class StockApp extends StatelessWidget {
+  const StockApp({super.key});
 
-  // This widget is the root of your application.
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Flutter Demo',
-      theme: ThemeData(
-        // This is the theme of your application.
-        //
-        // TRY THIS: Try running your application with "flutter run". You'll see
-        // the application has a purple toolbar. Then, without quitting the app,
-        // try changing the seedColor in the colorScheme below to Colors.green
-        // and then invoke "hot reload" (save your changes or press the "hot
-        // reload" button in a Flutter-supported IDE, or press "r" if you used
-        // the command line to start the app).
-        //
-        // Notice that the counter didn't reset back to zero; the application
-        // state is not lost during the reload. To reset the state, use hot
-        // restart instead.
-        //
-        // This works for code too, not just values: Most code changes can be
-        // tested with just a hot reload.
-        colorScheme: .fromSeed(seedColor: Colors.deepPurple),
+    return const MaterialApp(home: LoginPage());
+  }
+}
+
+class LoginPage extends StatefulWidget {
+  const LoginPage({super.key});
+
+  @override
+  State<LoginPage> createState() => _LoginPageState();
+}
+
+class _LoginPageState extends State<LoginPage> {
+  bool _isAmplifyConfigured = false;
+
+  final emailController = TextEditingController();
+  final passwordController = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    _init();
+  }
+
+  Future<void> _init() async {
+    await _configureAmplify();
+    await _checkLogin();
+  }
+
+  Future<void> _configureAmplify() async {
+    try {
+      if (!Amplify.isConfigured) {
+        await Amplify.addPlugin(AmplifyAuthCognito());
+        await Amplify.configure(amplifyconfig);
+      }
+      setState(() {
+        _isAmplifyConfigured = true;
+      });
+    } catch (e) {
+      print("Amplify設定エラー: $e");
+    }
+  }
+
+  Future<void> _checkLogin() async {
+    final session = await Amplify.Auth.fetchAuthSession();
+    if (session.isSignedIn) {
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (_) => const HomePage()),
+      );
+    }
+  }
+
+  // サインアップ
+  Future<void> signUp() async {
+    try {
+      final res = await Amplify.Auth.signUp(
+        username: emailController.text,
+        password: passwordController.text,
+        options: SignUpOptions(
+          userAttributes: {AuthUserAttributeKey.email: emailController.text},
+        ),
+      );
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text("登録完了: $res")));
+    } catch (e) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text("登録エラー: $e")));
+    }
+  }
+
+  // ⭐ 修正版ログイン
+  Future<void> signIn() async {
+    try {
+      final res = await Amplify.Auth.signIn(
+        username: emailController.text,
+        password: passwordController.text,
+      );
+
+      print("ログイン結果: $res");
+
+      // 成功
+      if (res.isSignedIn) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text("ログイン成功")));
+
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (_) => const HomePage()),
+        );
+        return;
+      }
+
+      // ⭐ 未完了の場合（ここ重要）
+      final nextStep = res.nextStep.signInStep;
+
+      if (nextStep == AuthSignInStep.confirmSignInWithNewPassword) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text("初回ログイン：パスワード変更が必要")));
+
+        // 仮対応：同じパスワードで確定
+        await Amplify.Auth.confirmSignIn(
+          confirmationValue: passwordController.text,
+        );
+
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (_) => const HomePage()),
+        );
+      } else {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text("ログイン未完了: $nextStep")));
+      }
+    } catch (e) {
+      print("ログインエラー: $e");
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text("ログインエラー: $e")));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text("ログイン")),
+      body: Center(
+        child: Container(
+          width: 300,
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text("株アプリ", style: TextStyle(fontSize: 24)),
+              const SizedBox(height: 20),
+
+              TextField(
+                controller: emailController,
+                decoration: const InputDecoration(
+                  labelText: "メールアドレス",
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 10),
+
+              TextField(
+                controller: passwordController,
+                obscureText: true,
+                decoration: const InputDecoration(
+                  labelText: "パスワード",
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 20),
+
+              ElevatedButton(
+                onPressed: _isAmplifyConfigured ? signIn : null,
+                child: const Text("ログイン"),
+              ),
+
+              const SizedBox(height: 10),
+
+              ElevatedButton(
+                onPressed: _isAmplifyConfigured ? signUp : null,
+                child: const Text("新規登録"),
+              ),
+            ],
+          ),
+        ),
       ),
-      home: const MyHomePage(title: 'Flutter Demo Home Page'),
     );
   }
 }
 
-class MyHomePage extends StatefulWidget {
-  const MyHomePage({super.key, required this.title});
-
-  // This widget is the home page of your application. It is stateful, meaning
-  // that it has a State object (defined below) that contains fields that affect
-  // how it looks.
-
-  // This class is the configuration for the state. It holds the values (in this
-  // case the title) provided by the parent (in this case the App widget) and
-  // used by the build method of the State. Fields in a Widget subclass are
-  // always marked "final".
-
-  final String title;
+class HomePage extends StatefulWidget {
+  const HomePage({super.key});
 
   @override
-  State<MyHomePage> createState() => _MyHomePageState();
+  State<HomePage> createState() => _HomePageState();
 }
 
-class _MyHomePageState extends State<MyHomePage> {
-  int _counter = 0;
+class _HomePageState extends State<HomePage> {
+  int _currentIndex = 0;
 
-  void _incrementCounter() {
+  List<String> watchList = [];
+
+  // 画面リスト
+  List<Widget> _pages() => [
+    // ① ホーム（一覧）
+    ListView.builder(
+      itemCount: watchList.length,
+      itemBuilder: (context, index) {
+        return ListTile(title: Text(watchList[index]));
+      },
+    ),
+
+    // ② 銘柄追加
+    AddStockPage(
+      onAdd: (value) {
+        setState(() {
+          watchList.addAll(value);
+          _currentIndex = 0; // 追加後ホームへ戻る
+        });
+      },
+    ),
+
+    // ③ ログアウト画面
+    Center(
+      child: ElevatedButton(
+        onPressed: () async {
+          await Amplify.Auth.signOut();
+
+          Navigator.pushAndRemoveUntil(
+            context,
+            MaterialPageRoute(builder: (_) => const LoginPage()),
+            (route) => false,
+          );
+        },
+        child: const Text("ログアウト"),
+      ),
+    ),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text("株アプリ")),
+
+      body: _pages()[_currentIndex],
+
+      // ⭐ フッター
+      bottomNavigationBar: BottomNavigationBar(
+        currentIndex: _currentIndex,
+        onTap: (index) {
+          setState(() {
+            _currentIndex = index;
+          });
+        },
+        items: const [
+          BottomNavigationBarItem(icon: Icon(Icons.home), label: "ホーム"),
+          BottomNavigationBarItem(icon: Icon(Icons.add), label: "追加"),
+          BottomNavigationBarItem(icon: Icon(Icons.logout), label: "ログアウト"),
+        ],
+      ),
+    );
+  }
+}
+
+// ⭐ 銘柄追加画面（少し改造）
+class AddStockPage extends StatefulWidget {
+  final Function(List<String>) onAdd;
+
+  const AddStockPage({super.key, required this.onAdd});
+
+  @override
+  State<AddStockPage> createState() => _AddStockPageState();
+}
+
+class _AddStockPageState extends State<AddStockPage> {
+  final controller = TextEditingController();
+
+  final List<String> allStocks = [
+    "トヨタ 7203",
+    "ソニー 6758",
+    "任天堂 7974",
+    "ソフトバンク 9984",
+    "キーエンス 6861",
+  ];
+
+  List<String> filteredStocks = [];
+  List<String> selectedStocks = [];
+
+  void search(String keyword) {
     setState(() {
-      // This call to setState tells the Flutter framework that something has
-      // changed in this State, which causes it to rerun the build method below
-      // so that the display can reflect the updated values. If we changed
-      // _counter without calling setState(), then the build method would not be
-      // called again, and so nothing would appear to happen.
-      _counter++;
+      filteredStocks = allStocks
+          .where((stock) => stock.contains(keyword))
+          .toList();
     });
+  }
+
+  void toggleSelect(String stock) {
+    setState(() {
+      if (selectedStocks.contains(stock)) {
+        selectedStocks.remove(stock);
+      } else {
+        selectedStocks.add(stock);
+      }
+    });
+  }
+
+  // ⭐ 修正：シンプルに即追加
+  void handleAdd() {
+    widget.onAdd(selectedStocks);
+    Navigator.pop(context);
   }
 
   @override
   Widget build(BuildContext context) {
-    // This method is rerun every time setState is called, for instance as done
-    // by the _incrementCounter method above.
-    //
-    // The Flutter framework has been optimized to make rerunning build methods
-    // fast, so that you can just rebuild anything that needs updating rather
-    // than having to individually change instances of widgets.
-    return Scaffold(
-      appBar: AppBar(
-        // TRY THIS: Try changing the color here to a specific color (to
-        // Colors.amber, perhaps?) and trigger a hot reload to see the AppBar
-        // change color while the other colors stay the same.
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        // Here we take the value from the MyHomePage object that was created by
-        // the App.build method, and use it to set our appbar title.
-        title: Text(widget.title),
-      ),
-      body: Center(
-        // Center is a layout widget. It takes a single child and positions it
-        // in the middle of the parent.
-        child: Column(
-          // Column is also a layout widget. It takes a list of children and
-          // arranges them vertically. By default, it sizes itself to fit its
-          // children horizontally, and tries to be as tall as its parent.
-          //
-          // Column has various properties to control how it sizes itself and
-          // how it positions its children. Here we use mainAxisAlignment to
-          // center the children vertically; the main axis here is the vertical
-          // axis because Columns are vertical (the cross axis would be
-          // horizontal).
-          //
-          // TRY THIS: Invoke "debug painting" (choose the "Toggle Debug Paint"
-          // action in the IDE, or press "p" in the console), to see the
-          // wireframe for each widget.
-          mainAxisAlignment: .center,
-          children: [
-            const Text('You have pushed the button this many times:'),
-            Text(
-              '$_counter',
-              style: Theme.of(context).textTheme.headlineMedium,
+    return Padding(
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        children: [
+          // 入力
+          TextField(
+            controller: controller,
+            onChanged: search,
+            decoration: const InputDecoration(
+              labelText: "銘柄名 or コード",
+              border: OutlineInputBorder(),
             ),
-          ],
-        ),
-      ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _incrementCounter,
-        tooltip: 'Increment',
-        child: const Icon(Icons.add),
+          ),
+
+          const SizedBox(height: 20),
+
+          // 検索結果
+          Expanded(
+            child: ListView.builder(
+              itemCount: filteredStocks.length,
+              itemBuilder: (context, index) {
+                final stock = filteredStocks[index];
+                final isSelected = selectedStocks.contains(stock);
+
+                return ListTile(
+                  title: Text(stock),
+                  trailing: Icon(
+                    isSelected
+                        ? Icons.check_box
+                        : Icons.check_box_outline_blank,
+                  ),
+                  onTap: () => toggleSelect(stock),
+                );
+              },
+            ),
+          ),
+
+          const SizedBox(height: 10),
+
+          // ⭐ 追加ボタン
+          ElevatedButton(
+            onPressed: selectedStocks.isNotEmpty
+                ? handleAdd
+                : null, // ← 未選択なら無効
+            child: const Text("追加"),
+          ),
+        ],
       ),
     );
   }
