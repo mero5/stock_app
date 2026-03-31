@@ -2,6 +2,49 @@ import 'package:flutter/material.dart';
 import 'package:amplify_flutter/amplify_flutter.dart';
 import 'package:amplify_auth_cognito/amplify_auth_cognito.dart';
 import 'amplifyconfiguration.dart';
+import 'dart:convert';
+import 'package:http/http.dart' as http;
+
+Future<void> saveFavorites(List<String> stocks) async {
+  final user = await Amplify.Auth.getCurrentUser();
+
+  final url =
+      "https://b5srqu1twf.execute-api.ap-northeast-1.amazonaws.com/save";
+
+  final body = {"userId": user.userId, "stocks": stocks};
+
+  print("=== 送信URL ===");
+  print(url);
+
+  print("=== 送信BODY ===");
+  print(body);
+
+  final response = await http.post(
+    Uri.parse(url),
+    headers: {"Content-Type": "application/json"},
+    body: jsonEncode(body),
+  );
+
+  print("=== レスポンス ===");
+  print(response.body);
+}
+
+Future<List<String>> getFavorites() async {
+  final user = await Amplify.Auth.getCurrentUser();
+
+  final response = await http.get(
+    Uri.parse(
+      "https://3nbvb44ku4.execute-api.ap-northeast-1.amazonaws.com/get?userId=${user.userId}",
+    ),
+  );
+
+  print("ユーザーID: ${user.userId}");
+  print("レスポンス生データ: ${response.body}");
+
+  final data = jsonDecode(response.body);
+
+  return data.map<String>((item) => item['stock'].toString()).toList();
+}
 
 void main() {
   runApp(const StockApp());
@@ -216,7 +259,8 @@ class _HomePageState extends State<HomePage> {
     // ② 銘柄追加
     AddStockPage(
       watchList: watchList,
-      onAdd: (value) {
+      onAdd: (value) async {
+        await loadFavorites();
         setState(() {
           watchList.addAll(value);
           _currentIndex = 0; // 追加後ホームへ戻る
@@ -242,6 +286,22 @@ class _HomePageState extends State<HomePage> {
   ];
 
   @override
+  void initState() {
+    super.initState();
+    loadFavorites();
+  }
+
+  Future<void> loadFavorites() async {
+    final list = await getFavorites();
+
+    print("取得データ: $list");
+
+    setState(() {
+      watchList = list;
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text("株アプリ")),
@@ -251,7 +311,10 @@ class _HomePageState extends State<HomePage> {
       // ⭐ フッター
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _currentIndex,
-        onTap: (index) {
+        onTap: (index) async {
+          if (index == 0) {
+            await loadFavorites(); // ⭐ ホーム押したらDB再取得
+          }
           setState(() {
             _currentIndex = index;
           });
@@ -269,7 +332,7 @@ class _HomePageState extends State<HomePage> {
 // ⭐ 銘柄追加画面（少し改造）
 class AddStockPage extends StatefulWidget {
   final Function(List<String>) onAdd;
-  final List<String> watchList; // ⭐ 追加
+  final List<String> watchList;
 
   const AddStockPage({super.key, required this.onAdd, required this.watchList});
 
@@ -319,7 +382,8 @@ class _AddStockPageState extends State<AddStockPage> {
     });
   }
 
-  void handleAdd() {
+  void handleAdd() async {
+    await saveFavorites(selectedStocks); // ⭐ ここでAPIに保存
     widget.onAdd(selectedStocks);
   }
 
