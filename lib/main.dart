@@ -5,7 +5,7 @@ import 'amplifyconfiguration.dart';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 
-const backendUrl = "http://192.168.3.12:8000";
+const backendUrl = "http://13.115.75.49:8000";
 
 Future<void> saveFavorites(List<String> stocks) async {
   final user = await Amplify.Auth.getCurrentUser();
@@ -20,7 +20,7 @@ Future<void> saveFavorites(List<String> stocks) async {
   print("保存レスポンス: ${response.body}");
 }
 
-Future<List<String>> getFavorites() async {
+Future<List<Map<String, String>>> getFavorites() async {
   final user = await Amplify.Auth.getCurrentUser();
   final response = await http.get(
     Uri.parse(
@@ -29,7 +29,22 @@ Future<List<String>> getFavorites() async {
   );
   print("取得レスポンス: ${response.body}");
   final data = jsonDecode(response.body);
-  return data.map<String>((item) => item['stock'].toString()).toList();
+
+  final codes = data.map<String>((item) => item['stock'].toString()).toList();
+
+  List<Map<String, String>> result = [];
+  for (final code in codes) {
+    try {
+      final nameRes = await http.get(
+        Uri.parse("$backendUrl/stock/name?code=${Uri.encodeComponent(code)}"),
+      );
+      final nameData = jsonDecode(nameRes.body);
+      result.add({"code": code, "name": nameData["name"].toString()});
+    } catch (e) {
+      result.add({"code": code, "name": code});
+    }
+  }
+  return result;
 }
 
 void main() {
@@ -199,7 +214,7 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   int _currentIndex = 0;
-  List<String> watchList = [];
+  List<Map<String, String>> watchList = [];
 
   List<Widget> _pages() => [
     // ① ホーム（ウォッチリスト一覧）
@@ -208,9 +223,12 @@ class _HomePageState extends State<HomePage> {
         : ListView.builder(
             itemCount: watchList.length,
             itemBuilder: (context, index) {
+              final stock = watchList[index];
               return ListTile(
                 leading: const Icon(Icons.show_chart),
-                title: Text(watchList[index]),
+                title: Text(stock["name"] ?? stock["code"]!),
+                subtitle: Text(stock["code"]!),
+                trailing: const Icon(Icons.chevron_right),
               );
             },
           ),
@@ -279,7 +297,7 @@ class _HomePageState extends State<HomePage> {
 
 class AddStockPage extends StatefulWidget {
   final Function(List<String>) onAdd;
-  final List<String> watchList;
+  final List<Map<String, String>> watchList; // ← 型修正
 
   const AddStockPage({super.key, required this.onAdd, required this.watchList});
 
@@ -324,7 +342,8 @@ class _AddStockPageState extends State<AddStockPage> {
 
   void toggleSelect(Map<String, String> stock) {
     final code = stock["code"]!;
-    if (widget.watchList.contains(code)) return;
+    // ← 型修正：Map<String,String>のリストから検索
+    if (widget.watchList.any((s) => s["code"] == code)) return;
     setState(() {
       final idx = selectedStocks.indexWhere((s) => s["code"] == code);
       if (idx >= 0) {
@@ -372,7 +391,10 @@ class _AddStockPageState extends State<AddStockPage> {
                 final name = stock["name"]!;
                 final market = stock["market"]!;
                 final isSelected = selectedStocks.any((s) => s["code"] == code);
-                final isAlreadyAdded = widget.watchList.any((s) => s == code);
+                // ← 型修正
+                final isAlreadyAdded = widget.watchList.any(
+                  (s) => s["code"] == code,
+                );
 
                 return ListTile(
                   leading: Container(
