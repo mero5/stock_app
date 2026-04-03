@@ -49,9 +49,44 @@ Future<List<Map<String, String>>> getFavorites() async {
         Uri.parse("$backendUrl/stock/name?code=${Uri.encodeComponent(code)}"),
       );
       final nameData = jsonDecode(nameRes.body);
-      result.add({"code": code, "name": nameData["name"].toString()});
+
+      // 株価・前日比取得（軽いAPI）
+      String price = "---";
+      String change = "";
+      String changePct = "";
+      bool isPositive = true;
+
+      try {
+        final priceRes = await http.get(
+          Uri.parse(
+            "$backendUrl/stock/price?code=${Uri.encodeComponent(code)}",
+          ),
+        );
+        final priceData = jsonDecode(priceRes.body);
+        if (priceData['price'] != null) {
+          price = (priceData['price'] as num).toStringAsFixed(0);
+        }
+        if (priceData['change'] != null) {
+          final c = priceData['change'] as num;
+          final cp = priceData['change_pct'] as num;
+          isPositive = c >= 0;
+          change = c >= 0 ? "+${c.toStringAsFixed(1)}" : c.toStringAsFixed(1);
+          changePct = cp >= 0
+              ? "+${cp.toStringAsFixed(2)}%"
+              : "${cp.toStringAsFixed(2)}%";
+        }
+      } catch (_) {}
+
+      result.add({
+        "code": code,
+        "name": nameData["name"].toString(),
+        "price": price,
+        "change": change,
+        "change_pct": changePct,
+        "is_positive": isPositive ? "true" : "false",
+      });
     } catch (e) {
-      result.add({"code": code, "name": code});
+      result.add({"code": code, "name": code, "price": "---"});
     }
   }
   return result;
@@ -295,7 +330,34 @@ class _HomePageState extends State<HomePage> {
                     : const Icon(Icons.show_chart),
                 title: Text(name),
                 subtitle: Text(code),
-                trailing: _editMode ? null : const Icon(Icons.chevron_right),
+                trailing: _editMode
+                    ? null
+                    : Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Text(
+                            stock["price"] != null && stock["price"] != "---"
+                                ? "¥${stock["price"]}"
+                                : "---",
+                            style: const TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          if (stock["change"] != null &&
+                              stock["change"]!.isNotEmpty)
+                            Text(
+                              "${stock["change"]}  ${stock["change_pct"]}",
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: stock["is_positive"] == "true"
+                                    ? Colors.red
+                                    : Colors.green,
+                              ),
+                            ),
+                        ],
+                      ),
                 onTap: _editMode
                     ? () => _toggleSelect(code)
                     : () {
@@ -616,7 +678,11 @@ class _StockDetailPageState extends State<StockDetailPage> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // 現在株価
-          _buildPriceCard(price),
+          _buildPriceCard(
+            detail!['price'],
+            detail!['change'],
+            detail!['change_pct'],
+          ),
           const SizedBox(height: 16),
 
           // 財務情報
@@ -644,7 +710,8 @@ class _StockDetailPageState extends State<StockDetailPage> {
     );
   }
 
-  Widget _buildPriceCard(dynamic price) {
+  Widget _buildPriceCard(dynamic price, dynamic change, dynamic changePct) {
+    final isPositive = change != null ? (change as num) >= 0 : true;
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -660,12 +727,24 @@ class _StockDetailPageState extends State<StockDetailPage> {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  price != null ? "¥${price.toStringAsFixed(0)}" : "---",
+                  price != null
+                      ? "¥${(price as num).toStringAsFixed(0)}"
+                      : "---",
                   style: const TextStyle(
                     fontSize: 28,
                     fontWeight: FontWeight.bold,
                   ),
                 ),
+                if (change != null)
+                  Text(
+                    "${isPositive ? '+' : ''}${(change as num).toStringAsFixed(1)}  "
+                    "${isPositive ? '+' : ''}${(changePct as num).toStringAsFixed(2)}%",
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold,
+                      color: isPositive ? Colors.red : Colors.green,
+                    ),
+                  ),
               ],
             ),
             const Icon(Icons.show_chart, size: 40, color: Colors.blue),
@@ -719,10 +798,10 @@ class _StockDetailPageState extends State<StockDetailPage> {
         : candles;
 
     final minY = data
-        .map((c) => c['low'] as double)
+        .map((c) => (c['low'] as num?)?.toDouble() ?? 0.0)
         .reduce((a, b) => a < b ? a : b);
     final maxY = data
-        .map((c) => c['high'] as double)
+        .map((c) => (c['high'] as num?)?.toDouble() ?? 0.0)
         .reduce((a, b) => a > b ? a : b);
     final padding = (maxY - minY) * 0.1;
 
@@ -763,7 +842,7 @@ class _StockDetailPageState extends State<StockDetailPage> {
                   .map(
                     (e) => FlSpot(
                       e.key.toDouble(),
-                      (e.value['close'] as num).toDouble(),
+                      (e.value['close'] as num?)?.toDouble() ?? 0.0,
                     ),
                   )
                   .toList(),
@@ -780,7 +859,7 @@ class _StockDetailPageState extends State<StockDetailPage> {
                   .map(
                     (e) => FlSpot(
                       e.key.toDouble(),
-                      (e.value['ma5'] as num).toDouble(),
+                      (e.value['ma5'] as num?)?.toDouble() ?? 0.0,
                     ),
                   )
                   .toList(),
@@ -797,7 +876,7 @@ class _StockDetailPageState extends State<StockDetailPage> {
                   .map(
                     (e) => FlSpot(
                       e.key.toDouble(),
-                      (e.value['ma25'] as num).toDouble(),
+                      (e.value['ma25'] as num?)?.toDouble() ?? 0.0,
                     ),
                   )
                   .toList(),
