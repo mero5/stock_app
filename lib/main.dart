@@ -5,19 +5,30 @@ import 'amplifyconfiguration.dart';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 
-const backendUrl = "http://13.115.75.49:8000";
+const backendUrl = "http://13.114.75.49:8000";
 
 Future<void> saveFavorites(List<String> stocks) async {
   final user = await Amplify.Auth.getCurrentUser();
   final url =
       "https://b5srqu1twf.execute-api.ap-northeast-1.amazonaws.com/save";
   final body = {"userId": user.userId, "stocks": stocks};
-  final response = await http.post(
+  await http.post(
     Uri.parse(url),
     headers: {"Content-Type": "application/json"},
     body: jsonEncode(body),
   );
-  print("保存レスポンス: ${response.body}");
+}
+
+Future<void> deleteFavorite(String stock) async {
+  final user = await Amplify.Auth.getCurrentUser();
+  final url =
+      "https://b5srqu1twf.execute-api.ap-northeast-1.amazonaws.com/delete";
+  final response = await http.delete(
+    Uri.parse(url),
+    headers: {"Content-Type": "application/json"},
+    body: jsonEncode({"userId": user.userId, "stock": stock}),
+  );
+  print("削除レスポンス: ${response.body}");
 }
 
 Future<List<Map<String, String>>> getFavorites() async {
@@ -27,9 +38,7 @@ Future<List<Map<String, String>>> getFavorites() async {
       "https://3nbvb44ku4.execute-api.ap-northeast-1.amazonaws.com/get?userId=${user.userId}",
     ),
   );
-  print("取得レスポンス: ${response.body}");
   final data = jsonDecode(response.body);
-
   final codes = data.map<String>((item) => item['stock'].toString()).toList();
 
   List<Map<String, String>> result = [];
@@ -215,48 +224,8 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> {
   int _currentIndex = 0;
   List<Map<String, String>> watchList = [];
-
-  List<Widget> _pages() => [
-    // ① ホーム（ウォッチリスト一覧）
-    watchList.isEmpty
-        ? const Center(child: Text("銘柄を追加してください"))
-        : ListView.builder(
-            itemCount: watchList.length,
-            itemBuilder: (context, index) {
-              final stock = watchList[index];
-              return ListTile(
-                leading: const Icon(Icons.show_chart),
-                title: Text(stock["name"] ?? stock["code"]!),
-                subtitle: Text(stock["code"]!),
-                trailing: const Icon(Icons.chevron_right),
-              );
-            },
-          ),
-
-    // ② 銘柄追加
-    AddStockPage(
-      watchList: watchList,
-      onAdd: (codes) async {
-        await loadFavorites();
-        setState(() => _currentIndex = 0);
-      },
-    ),
-
-    // ③ ログアウト
-    Center(
-      child: ElevatedButton(
-        onPressed: () async {
-          await Amplify.Auth.signOut();
-          Navigator.pushAndRemoveUntil(
-            context,
-            MaterialPageRoute(builder: (_) => const LoginPage()),
-            (route) => false,
-          );
-        },
-        child: const Text("ログアウト"),
-      ),
-    ),
-  ];
+  bool _editMode = false;
+  List<String> _selectedCodes = [];
 
   @override
   void initState() {
@@ -267,23 +236,145 @@ class _HomePageState extends State<HomePage> {
   Future<void> loadFavorites() async {
     try {
       final list = await getFavorites();
-      print("取得データ: $list");
       setState(() => watchList = list);
     } catch (e) {
       print("お気に入り取得エラー: $e");
     }
   }
 
+  void _toggleEditMode() {
+    setState(() {
+      _editMode = !_editMode;
+      _selectedCodes = [];
+    });
+  }
+
+  void _toggleSelect(String code) {
+    setState(() {
+      if (_selectedCodes.contains(code)) {
+        _selectedCodes.remove(code);
+      } else {
+        _selectedCodes.add(code);
+      }
+    });
+  }
+
+  Future<void> _deleteSelected() async {
+    for (final code in _selectedCodes) {
+      await deleteFavorite(code);
+    }
+    await loadFavorites();
+    setState(() {
+      _editMode = false;
+      _selectedCodes = [];
+    });
+  }
+
+  Widget _buildHomeTab() {
+    if (watchList.isEmpty) {
+      return const Center(child: Text("銘柄を追加してください"));
+    }
+    return Column(
+      children: [
+        Expanded(
+          child: ListView.builder(
+            itemCount: watchList.length,
+            itemBuilder: (context, index) {
+              final stock = watchList[index];
+              final code = stock["code"]!;
+              final name = stock["name"] ?? code;
+              final isSelected = _selectedCodes.contains(code);
+
+              return ListTile(
+                leading: _editMode
+                    ? Checkbox(
+                        value: isSelected,
+                        onChanged: (_) => _toggleSelect(code),
+                      )
+                    : const Icon(Icons.show_chart),
+                title: Text(name),
+                subtitle: Text(code),
+                trailing: _editMode ? null : const Icon(Icons.chevron_right),
+                onTap: _editMode
+                    ? () => _toggleSelect(code)
+                    : () {
+                        // 詳細画面へ（後で実装）
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text("$name の詳細（実装予定）")),
+                        );
+                      },
+              );
+            },
+          ),
+        ),
+        if (_editMode && _selectedCodes.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: _deleteSelected,
+                icon: const Icon(Icons.delete),
+                label: Text("${_selectedCodes.length}件削除"),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.red,
+                  foregroundColor: Colors.white,
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text("株アプリ")),
-      body: _pages()[_currentIndex],
+      appBar: AppBar(
+        title: const Text("株アプリ"),
+        actions: [
+          if (_currentIndex == 0)
+            IconButton(
+              icon: Icon(_editMode ? Icons.check : Icons.edit),
+              onPressed: _toggleEditMode,
+            ),
+        ],
+      ),
+      body: IndexedStack(
+        index: _currentIndex,
+        children: [
+          _buildHomeTab(),
+          AddStockPage(
+            watchList: watchList,
+            onAdd: (codes) async {
+              await loadFavorites();
+              setState(() => _currentIndex = 0);
+            },
+          ),
+          Center(
+            child: ElevatedButton(
+              onPressed: () async {
+                await Amplify.Auth.signOut();
+                Navigator.pushAndRemoveUntil(
+                  context,
+                  MaterialPageRoute(builder: (_) => const LoginPage()),
+                  (route) => false,
+                );
+              },
+              child: const Text("ログアウト"),
+            ),
+          ),
+        ],
+      ),
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _currentIndex,
         onTap: (index) async {
           if (index == 0) await loadFavorites();
-          setState(() => _currentIndex = index);
+          setState(() {
+            _currentIndex = index;
+            _editMode = false;
+            _selectedCodes = [];
+          });
         },
         items: const [
           BottomNavigationBarItem(icon: Icon(Icons.home), label: "ホーム"),
@@ -297,7 +388,7 @@ class _HomePageState extends State<HomePage> {
 
 class AddStockPage extends StatefulWidget {
   final Function(List<String>) onAdd;
-  final List<Map<String, String>> watchList; // ← 型修正
+  final List<Map<String, String>> watchList;
 
   const AddStockPage({super.key, required this.onAdd, required this.watchList});
 
@@ -342,7 +433,6 @@ class _AddStockPageState extends State<AddStockPage> {
 
   void toggleSelect(Map<String, String> stock) {
     final code = stock["code"]!;
-    // ← 型修正：Map<String,String>のリストから検索
     if (widget.watchList.any((s) => s["code"] == code)) return;
     setState(() {
       final idx = selectedStocks.indexWhere((s) => s["code"] == code);
@@ -391,7 +481,6 @@ class _AddStockPageState extends State<AddStockPage> {
                 final name = stock["name"]!;
                 final market = stock["market"]!;
                 final isSelected = selectedStocks.any((s) => s["code"] == code);
-                // ← 型修正
                 final isAlreadyAdded = widget.watchList.any(
                   (s) => s["code"] == code,
                 );
