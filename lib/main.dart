@@ -4,6 +4,7 @@ import 'package:amplify_auth_cognito/amplify_auth_cognito.dart';
 import 'amplifyconfiguration.dart';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import 'package:fl_chart/fl_chart.dart';
 
 const backendUrl = "http://13.114.75.49:8000";
 
@@ -298,9 +299,12 @@ class _HomePageState extends State<HomePage> {
                 onTap: _editMode
                     ? () => _toggleSelect(code)
                     : () {
-                        // 詳細画面へ（後で実装）
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text("$name の詳細（実装予定）")),
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) =>
+                                StockDetailPage(code: code, name: name),
+                          ),
                         );
                       },
               );
@@ -534,6 +538,351 @@ class _AddStockPageState extends State<AddStockPage> {
             label: const Text("ウォッチリストに追加"),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class StockDetailPage extends StatefulWidget {
+  final String code;
+  final String name;
+
+  const StockDetailPage({super.key, required this.code, required this.name});
+
+  @override
+  State<StockDetailPage> createState() => _StockDetailPageState();
+}
+
+class _StockDetailPageState extends State<StockDetailPage> {
+  Map<String, dynamic>? detail;
+  bool isLoading = true;
+  String error = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _loadDetail();
+  }
+
+  Future<void> _loadDetail() async {
+    try {
+      final res = await http.get(
+        Uri.parse(
+          "$backendUrl/stock/detail?code=${Uri.encodeComponent(widget.code)}",
+        ),
+      );
+      setState(() {
+        detail = jsonDecode(res.body);
+        isLoading = false;
+      });
+    } catch (e) {
+      setState(() {
+        error = e.toString();
+        isLoading = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(widget.name),
+        backgroundColor: Colors.white,
+        foregroundColor: Colors.black,
+        elevation: 1,
+      ),
+      body: isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : error.isNotEmpty
+          ? Center(child: Text("エラー: $error"))
+          : _buildBody(),
+    );
+  }
+
+  Widget _buildBody() {
+    if (detail == null || detail!.containsKey('error')) {
+      return const Center(child: Text("データを取得できませんでした"));
+    }
+
+    final candles = List<Map<String, dynamic>>.from(detail!['candles'] ?? []);
+    final price = detail!['price'];
+    final per = detail!['per'];
+    final pbr = detail!['pbr'];
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // 現在株価
+          _buildPriceCard(price),
+          const SizedBox(height: 16),
+
+          // 財務情報
+          _buildFinancialCard(per, pbr),
+          const SizedBox(height: 16),
+
+          // ローソク足チャート
+          const Text(
+            "株価チャート（3ヶ月）",
+            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+          ),
+          const SizedBox(height: 8),
+          _buildCandleChart(candles),
+          const SizedBox(height: 16),
+
+          // RSIチャート
+          const Text(
+            "RSI",
+            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+          ),
+          const SizedBox(height: 8),
+          _buildRsiChart(candles),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPriceCard(dynamic price) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  widget.code,
+                  style: const TextStyle(color: Colors.grey, fontSize: 12),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  price != null ? "¥${price.toStringAsFixed(0)}" : "---",
+                  style: const TextStyle(
+                    fontSize: 28,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            ),
+            const Icon(Icons.show_chart, size: 40, color: Colors.blue),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFinancialCard(dynamic per, dynamic pbr) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceAround,
+          children: [
+            _buildFinancialItem(
+              "PER",
+              per != null ? "${per.toStringAsFixed(1)}倍" : "---",
+            ),
+            const VerticalDivider(),
+            _buildFinancialItem(
+              "PBR",
+              pbr != null ? "${pbr.toStringAsFixed(1)}倍" : "---",
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFinancialItem(String label, String value) {
+    return Column(
+      children: [
+        Text(label, style: const TextStyle(color: Colors.grey, fontSize: 12)),
+        const SizedBox(height: 4),
+        Text(
+          value,
+          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildCandleChart(List<Map<String, dynamic>> candles) {
+    if (candles.isEmpty) return const Text("データなし");
+
+    // 直近30件だけ表示
+    final data = candles.length > 30
+        ? candles.sublist(candles.length - 30)
+        : candles;
+
+    final minY = data
+        .map((c) => c['low'] as double)
+        .reduce((a, b) => a < b ? a : b);
+    final maxY = data
+        .map((c) => c['high'] as double)
+        .reduce((a, b) => a > b ? a : b);
+    final padding = (maxY - minY) * 0.1;
+
+    return SizedBox(
+      height: 200,
+      child: LineChart(
+        LineChartData(
+          minY: minY - padding,
+          maxY: maxY + padding,
+          gridData: const FlGridData(show: true),
+          titlesData: FlTitlesData(
+            leftTitles: AxisTitles(
+              sideTitles: SideTitles(
+                showTitles: true,
+                reservedSize: 60,
+                getTitlesWidget: (value, meta) => Text(
+                  value.toStringAsFixed(0),
+                  style: const TextStyle(fontSize: 10),
+                ),
+              ),
+            ),
+            bottomTitles: const AxisTitles(
+              sideTitles: SideTitles(showTitles: false),
+            ),
+            rightTitles: const AxisTitles(
+              sideTitles: SideTitles(showTitles: false),
+            ),
+            topTitles: const AxisTitles(
+              sideTitles: SideTitles(showTitles: false),
+            ),
+          ),
+          lineBarsData: [
+            // 終値ライン
+            LineChartBarData(
+              spots: data
+                  .asMap()
+                  .entries
+                  .map(
+                    (e) => FlSpot(
+                      e.key.toDouble(),
+                      (e.value['close'] as num).toDouble(),
+                    ),
+                  )
+                  .toList(),
+              isCurved: true,
+              color: Colors.blue,
+              barWidth: 2,
+              dotData: const FlDotData(show: false),
+            ),
+            // MA5
+            LineChartBarData(
+              spots: data
+                  .asMap()
+                  .entries
+                  .map(
+                    (e) => FlSpot(
+                      e.key.toDouble(),
+                      (e.value['ma5'] as num).toDouble(),
+                    ),
+                  )
+                  .toList(),
+              isCurved: true,
+              color: Colors.orange,
+              barWidth: 1,
+              dotData: const FlDotData(show: false),
+            ),
+            // MA25
+            LineChartBarData(
+              spots: data
+                  .asMap()
+                  .entries
+                  .map(
+                    (e) => FlSpot(
+                      e.key.toDouble(),
+                      (e.value['ma25'] as num).toDouble(),
+                    ),
+                  )
+                  .toList(),
+              isCurved: true,
+              color: Colors.green,
+              barWidth: 1,
+              dotData: const FlDotData(show: false),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildRsiChart(List<Map<String, dynamic>> candles) {
+    if (candles.isEmpty) return const Text("データなし");
+
+    final data = candles.length > 30
+        ? candles.sublist(candles.length - 30)
+        : candles;
+
+    final rsiSpots = data
+        .asMap()
+        .entries
+        .where((e) => e.value['rsi'] != null)
+        .map(
+          (e) => FlSpot(e.key.toDouble(), (e.value['rsi'] as num).toDouble()),
+        )
+        .toList();
+
+    return SizedBox(
+      height: 120,
+      child: LineChart(
+        LineChartData(
+          minY: 0,
+          maxY: 100,
+          gridData: FlGridData(
+            show: true,
+            getDrawingHorizontalLine: (value) {
+              if (value == 30 || value == 70) {
+                return const FlLine(
+                  color: Colors.red,
+                  strokeWidth: 1,
+                  dashArray: [5, 5],
+                );
+              }
+              return const FlLine(color: Colors.grey, strokeWidth: 0.5);
+            },
+          ),
+          titlesData: FlTitlesData(
+            leftTitles: AxisTitles(
+              sideTitles: SideTitles(
+                showTitles: true,
+                reservedSize: 40,
+                getTitlesWidget: (value, meta) {
+                  if (value == 30 || value == 70) {
+                    return Text(
+                      value.toInt().toString(),
+                      style: const TextStyle(fontSize: 10, color: Colors.red),
+                    );
+                  }
+                  return const SizedBox();
+                },
+              ),
+            ),
+            bottomTitles: const AxisTitles(
+              sideTitles: SideTitles(showTitles: false),
+            ),
+            rightTitles: const AxisTitles(
+              sideTitles: SideTitles(showTitles: false),
+            ),
+            topTitles: const AxisTitles(
+              sideTitles: SideTitles(showTitles: false),
+            ),
+          ),
+          lineBarsData: [
+            LineChartBarData(
+              spots: rsiSpots,
+              isCurved: true,
+              color: Colors.purple,
+              barWidth: 2,
+              dotData: const FlDotData(show: false),
+            ),
+          ],
+        ),
       ),
     );
   }
