@@ -5,6 +5,8 @@ import 'amplifyconfiguration.dart';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:fl_chart/fl_chart.dart';
+import 'package:candlesticks_plus/candlesticks_plus.dart';
+import 'package:candlesticks_plus/src/models/candle_style.dart';
 
 const backendUrl = "http://13.114.75.49:8000";
 
@@ -792,100 +794,28 @@ class _StockDetailPageState extends State<StockDetailPage> {
   Widget _buildCandleChart(List<Map<String, dynamic>> candles) {
     if (candles.isEmpty) return const Text("データなし");
 
-    // 直近30件だけ表示
-    final data = candles.length > 30
-        ? candles.sublist(candles.length - 30)
+    final data = candles.length > 60
+        ? candles.sublist(candles.length - 60)
         : candles;
 
-    final minY = data
-        .map((c) => (c['low'] as num?)?.toDouble() ?? 0.0)
-        .reduce((a, b) => a < b ? a : b);
-    final maxY = data
-        .map((c) => (c['high'] as num?)?.toDouble() ?? 0.0)
-        .reduce((a, b) => a > b ? a : b);
-    final padding = (maxY - minY) * 0.1;
+    final candleList = data.map((c) {
+      return Candle(
+        date: DateTime.parse(c['date']),
+        open: (c['open'] as num?)?.toDouble() ?? 0.0,
+        high: (c['high'] as num?)?.toDouble() ?? 0.0,
+        low: (c['low'] as num?)?.toDouble() ?? 0.0,
+        close: (c['close'] as num?)?.toDouble() ?? 0.0,
+        volume: (c['volume'] as num?)?.toDouble() ?? 0.0,
+      );
+    }).toList();
 
     return SizedBox(
-      height: 200,
-      child: LineChart(
-        LineChartData(
-          minY: minY - padding,
-          maxY: maxY + padding,
-          gridData: const FlGridData(show: true),
-          titlesData: FlTitlesData(
-            leftTitles: AxisTitles(
-              sideTitles: SideTitles(
-                showTitles: true,
-                reservedSize: 60,
-                getTitlesWidget: (value, meta) => Text(
-                  value.toStringAsFixed(0),
-                  style: const TextStyle(fontSize: 10),
-                ),
-              ),
-            ),
-            bottomTitles: const AxisTitles(
-              sideTitles: SideTitles(showTitles: false),
-            ),
-            rightTitles: const AxisTitles(
-              sideTitles: SideTitles(showTitles: false),
-            ),
-            topTitles: const AxisTitles(
-              sideTitles: SideTitles(showTitles: false),
-            ),
-          ),
-          lineBarsData: [
-            // 終値ライン
-            LineChartBarData(
-              spots: data
-                  .asMap()
-                  .entries
-                  .map(
-                    (e) => FlSpot(
-                      e.key.toDouble(),
-                      (e.value['close'] as num?)?.toDouble() ?? 0.0,
-                    ),
-                  )
-                  .toList(),
-              isCurved: true,
-              color: Colors.blue,
-              barWidth: 2,
-              dotData: const FlDotData(show: false),
-            ),
-            // MA5
-            LineChartBarData(
-              spots: data
-                  .asMap()
-                  .entries
-                  .map(
-                    (e) => FlSpot(
-                      e.key.toDouble(),
-                      (e.value['ma5'] as num?)?.toDouble() ?? 0.0,
-                    ),
-                  )
-                  .toList(),
-              isCurved: true,
-              color: Colors.orange,
-              barWidth: 1,
-              dotData: const FlDotData(show: false),
-            ),
-            // MA25
-            LineChartBarData(
-              spots: data
-                  .asMap()
-                  .entries
-                  .map(
-                    (e) => FlSpot(
-                      e.key.toDouble(),
-                      (e.value['ma25'] as num?)?.toDouble() ?? 0.0,
-                    ),
-                  )
-                  .toList(),
-              isCurved: true,
-              color: Colors.green,
-              barWidth: 1,
-              dotData: const FlDotData(show: false),
-            ),
-          ],
+      height: 300,
+      child: Candlesticks(
+        candles: candleList,
+        candleStyle: CandleStyle(
+          bullColor: Colors.red, // 上昇→赤
+          bearColor: Colors.green, // 下落→緑
         ),
       ),
     );
