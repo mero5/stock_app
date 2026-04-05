@@ -10,6 +10,17 @@ import 'package:candlesticks_plus/src/models/candle_style.dart';
 
 const backendUrl = "http://13.114.75.49:8000";
 
+String formatNumber(dynamic value, {int decimals = 0}) {
+  if (value == null) return "---";
+  final num v = value is num ? value : num.parse(value.toString());
+  final parts = v.toStringAsFixed(decimals).split('.');
+  final intPart = parts[0].replaceAllMapped(
+    RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
+    (m) => '${m[1]},',
+  );
+  return decimals > 0 ? '$intPart.${parts[1]}' : intPart;
+}
+
 Future<void> saveFavorites(List<String> stocks) async {
   final user = await Amplify.Auth.getCurrentUser();
   final url =
@@ -52,7 +63,6 @@ Future<List<Map<String, String>>> getFavorites() async {
       );
       final nameData = jsonDecode(nameRes.body);
 
-      // 株価・前日比取得（軽いAPI）
       String price = "---";
       String change = "";
       String changePct = "";
@@ -340,7 +350,7 @@ class _HomePageState extends State<HomePage> {
                         children: [
                           Text(
                             stock["price"] != null && stock["price"] != "---"
-                                ? "¥${stock["price"]}"
+                                ? "¥${formatNumber(int.tryParse(stock["price"]!) ?? 0)}"
                                 : "---",
                             style: const TextStyle(
                               fontSize: 16,
@@ -670,43 +680,37 @@ class _StockDetailPageState extends State<StockDetailPage> {
     }
 
     final candles = List<Map<String, dynamic>>.from(detail!['candles'] ?? []);
-    final price = detail!['price'];
-    final per = detail!['per'];
-    final pbr = detail!['pbr'];
 
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
+    return DefaultTabController(
+      length: 4,
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // 現在株価
           _buildPriceCard(
             detail!['price'],
             detail!['change'],
             detail!['change_pct'],
           ),
-          const SizedBox(height: 16),
-
-          // 財務情報
-          _buildFinancialCard(per, pbr),
-          const SizedBox(height: 16),
-
-          // ローソク足チャート
-          const Text(
-            "株価チャート（3ヶ月）",
-            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+          const TabBar(
+            tabs: [
+              Tab(icon: Icon(Icons.candlestick_chart), text: "チャート"),
+              Tab(icon: Icon(Icons.flag), text: "判断"),
+              Tab(icon: Icon(Icons.bar_chart), text: "指標"),
+              Tab(icon: Icon(Icons.smart_toy), text: "AI分析"),
+            ],
+            labelColor: Colors.blue,
+            unselectedLabelColor: Colors.grey,
+            indicatorColor: Colors.blue,
           ),
-          const SizedBox(height: 8),
-          _buildCandleChart(candles),
-          const SizedBox(height: 16),
-
-          // RSIチャート
-          const Text(
-            "RSI",
-            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+          Expanded(
+            child: TabBarView(
+              children: [
+                _buildChartTab(candles),
+                _buildJudgeTab(candles),
+                _buildIndicatorTab(),
+                _buildAiTab(candles),
+              ],
+            ),
           ),
-          const SizedBox(height: 8),
-          _buildRsiChart(candles),
         ],
       ),
     );
@@ -729,9 +733,7 @@ class _StockDetailPageState extends State<StockDetailPage> {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  price != null
-                      ? "¥${(price as num).toStringAsFixed(0)}"
-                      : "---",
+                  price != null ? "¥${formatNumber(price)}" : "---",
                   style: const TextStyle(
                     fontSize: 28,
                     fontWeight: FontWeight.bold,
@@ -756,21 +758,180 @@ class _StockDetailPageState extends State<StockDetailPage> {
     );
   }
 
-  Widget _buildFinancialCard(dynamic per, dynamic pbr) {
+  Widget _buildChartTab(List<Map<String, dynamic>> candles) {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            "ローソク足チャート",
+            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+          ),
+          const SizedBox(height: 8),
+          _buildCandleChart(candles),
+          const SizedBox(height: 16),
+          const Text(
+            "RSI",
+            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+          ),
+          const SizedBox(height: 4),
+          const Text(
+            "30以下：売られすぎ  70以上：買われすぎ",
+            style: TextStyle(fontSize: 11, color: Colors.grey),
+          ),
+          const SizedBox(height: 8),
+          _buildRsiChart(candles),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildJudgeTab(List<Map<String, dynamic>> candles) {
+    if (candles.isEmpty) return const Center(child: Text("データなし"));
+
+    final closes = candles
+        .map((c) => (c['close'] as num?)?.toDouble() ?? 0.0)
+        .toList();
+    final latest = closes.last;
+    final ma5 = (candles.last['ma5'] as num?)?.toDouble() ?? 0.0;
+    final ma25 = (candles.last['ma25'] as num?)?.toDouble() ?? 0.0;
+    final rsi = (candles.last['rsi'] as num?)?.toDouble() ?? 50.0;
+
+    String crossSignal = "なし";
+    Color crossColor = Colors.grey;
+    if (candles.length >= 2) {
+      final prevMa5 =
+          (candles[candles.length - 2]['ma5'] as num?)?.toDouble() ?? 0.0;
+      final prevMa25 =
+          (candles[candles.length - 2]['ma25'] as num?)?.toDouble() ?? 0.0;
+      if (prevMa5 < prevMa25 && ma5 > ma25) {
+        crossSignal = "ゴールデンクロス（買いシグナル）";
+        crossColor = Colors.red;
+      } else if (prevMa5 > prevMa25 && ma5 < ma25) {
+        crossSignal = "デッドクロス（売りシグナル）";
+        crossColor = Colors.green;
+      }
+    }
+
+    String rsiSignal;
+    Color rsiColor;
+    if (rsi <= 30) {
+      rsiSignal = "売られすぎ（買いチャンス）";
+      rsiColor = Colors.red;
+    } else if (rsi >= 70) {
+      rsiSignal = "買われすぎ（売りチャンス）";
+      rsiColor = Colors.green;
+    } else {
+      rsiSignal = "中立";
+      rsiColor = Colors.grey;
+    }
+
+    String maSignal;
+    Color maColor;
+    if (latest > ma5 && latest > ma25) {
+      maSignal = "移動平均線の上（強気）";
+      maColor = Colors.red;
+    } else if (latest < ma5 && latest < ma25) {
+      maSignal = "移動平均線の下（弱気）";
+      maColor = Colors.green;
+    } else {
+      maSignal = "移動平均線付近（中立）";
+      maColor = Colors.grey;
+    }
+
+    final highs = candles
+        .map((c) => (c['high'] as num?)?.toDouble() ?? 0.0)
+        .toList();
+    final lows = candles
+        .map((c) => (c['low'] as num?)?.toDouble() ?? 0.0)
+        .toList();
+    final high52 = highs.reduce((a, b) => a > b ? a : b);
+    final low52 = lows.reduce((a, b) => a < b ? a : b);
+    final distFromHigh = ((high52 - latest) / high52 * 100).toStringAsFixed(1);
+    final distFromLow = ((latest - low52) / low52 * 100).toStringAsFixed(1);
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            "売買シグナル",
+            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+          ),
+          const SizedBox(height: 12),
+          _buildSignalCard("📈 トレンド", crossSignal, crossColor),
+          const SizedBox(height: 8),
+          _buildSignalCard(
+            "💹 RSI (${rsi.toStringAsFixed(1)})",
+            rsiSignal,
+            rsiColor,
+          ),
+          const SizedBox(height: 8),
+          _buildSignalCard("📊 移動平均線", maSignal, maColor),
+          const SizedBox(height: 16),
+          const Text(
+            "価格帯",
+            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+          ),
+          const SizedBox(height: 12),
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text("高値から", style: TextStyle(color: Colors.grey)),
+                      Text(
+                        "-$distFromHigh%",
+                        style: const TextStyle(
+                          color: Colors.green,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text("安値から", style: TextStyle(color: Colors.grey)),
+                      Text(
+                        "+$distFromLow%",
+                        style: const TextStyle(
+                          color: Colors.red,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSignalCard(String label, String value, Color color) {
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(12),
         child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceAround,
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            _buildFinancialItem(
-              "PER",
-              per != null ? "${per.toStringAsFixed(1)}倍" : "---",
-            ),
-            const VerticalDivider(),
-            _buildFinancialItem(
-              "PBR",
-              pbr != null ? "${pbr.toStringAsFixed(1)}倍" : "---",
+            Text(label, style: const TextStyle(fontSize: 14)),
+            Text(
+              value,
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.bold,
+                color: color,
+              ),
             ),
           ],
         ),
@@ -778,16 +939,102 @@ class _StockDetailPageState extends State<StockDetailPage> {
     );
   }
 
-  Widget _buildFinancialItem(String label, String value) {
-    return Column(
-      children: [
-        Text(label, style: const TextStyle(color: Colors.grey, fontSize: 12)),
-        const SizedBox(height: 4),
-        Text(
-          value,
-          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+  Widget _buildIndicatorTab() {
+    final per = detail!['per'];
+    final pbr = detail!['pbr'];
+    final marketCap = detail!['market_cap'];
+
+    String formatMarketCap(dynamic mc) {
+      if (mc == null) return "---";
+      final v = (mc as num).toDouble();
+      if (v >= 1e12) return "${formatNumber(v / 1e12, decimals: 1)}兆円";
+      if (v >= 1e8) return "${formatNumber(v / 1e8)}億円";
+      return "¥${formatNumber(v)}";
+    }
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            "バリュエーション指標",
+            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+          ),
+          const SizedBox(height: 12),
+          _buildIndicatorRow(
+            "PER（株価収益率）",
+            per != null ? "${formatNumber(per, decimals: 1)}倍" : "---",
+            "株価が1株あたり利益の何倍か。低いほど割安",
+          ),
+          _buildIndicatorRow(
+            "PBR（株価純資産倍率）",
+            pbr != null ? "${formatNumber(pbr, decimals: 1)}倍" : "---",
+            "1倍以下は解散価値以下で割安の目安",
+          ),
+          _buildIndicatorRow(
+            "時価総額",
+            formatMarketCap(marketCap),
+            "市場が評価する会社全体の価値",
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildIndicatorRow(String label, String value, String description) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  label,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 14,
+                  ),
+                ),
+                Text(
+                  value,
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.blue,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              description,
+              style: const TextStyle(fontSize: 11, color: Colors.grey),
+            ),
+          ],
         ),
-      ],
+      ),
+    );
+  }
+
+  Widget _buildAiTab(List<Map<String, dynamic>> candles) {
+    return const Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.smart_toy, size: 60, color: Colors.blue),
+          SizedBox(height: 16),
+          Text(
+            "AI分析",
+            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+          ),
+          SizedBox(height: 8),
+          Text("近日実装予定", style: TextStyle(color: Colors.grey)),
+        ],
+      ),
     );
   }
 
@@ -814,8 +1061,8 @@ class _StockDetailPageState extends State<StockDetailPage> {
       child: Candlesticks(
         candles: candleList,
         candleStyle: CandleStyle(
-          bullColor: Colors.red, // 上昇→赤
-          bearColor: Colors.green, // 下落→緑
+          bullColor: Colors.red,
+          bearColor: Colors.green,
         ),
       ),
     );
