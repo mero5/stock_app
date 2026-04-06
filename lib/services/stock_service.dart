@@ -62,6 +62,45 @@ class StockService {
         .toList();
   }
 
+  // YouTubeチャンネル検索
+  static Future<List<Map<String, String>>> searchChannels(String query) async {
+    try {
+      final res = await http.get(
+        Uri.parse(
+          "${Constants.backendUrl}/channels/search?q=${Uri.encodeComponent(query)}",
+        ),
+      );
+      final List data = jsonDecode(res.body);
+      return data
+          .map<Map<String, String>>(
+            (e) => {
+              "channel_id": e["channel_id"].toString(),
+              "name": e["name"].toString(),
+              "description": e["description"].toString(),
+              "thumbnail": e["thumbnail"].toString(),
+            },
+          )
+          .toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  // EC2に字幕を送って要約
+  static Future<String> summarize(String title, String transcript) async {
+    try {
+      final res = await http.post(
+        Uri.parse("${Constants.backendUrl}/summarize"),
+        headers: {"Content-Type": "application/json"},
+        body: jsonEncode({"title": title, "transcript": transcript}),
+      );
+      final data = jsonDecode(res.body);
+      return data["summary"] ?? "要約できませんでした";
+    } catch (e) {
+      return "エラーが発生しました: $e";
+    }
+  }
+
   // ウォッチリスト用：コードから Stock オブジェクトを生成
   static Future<Stock> getStockInfo(String code) async {
     String name = code;

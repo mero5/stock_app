@@ -7,6 +7,7 @@ import '../utils/formatter.dart';
 import 'login_screen.dart';
 import 'search_screen.dart';
 import 'detail_screen.dart';
+import 'youtube_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -177,6 +178,7 @@ class _HomeScreenState extends State<HomeScreen> {
               setState(() => _currentIndex = 0);
             },
           ),
+          const YoutubeScreen(), // ← 追加
           Center(
             child: ElevatedButton(
               onPressed: () async {
@@ -205,6 +207,10 @@ class _HomeScreenState extends State<HomeScreen> {
         items: const [
           BottomNavigationBarItem(icon: Icon(Icons.home), label: "ホーム"),
           BottomNavigationBarItem(icon: Icon(Icons.add), label: "追加"),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.play_circle),
+            label: "YouTube",
+          ),
           BottomNavigationBarItem(icon: Icon(Icons.logout), label: "ログアウト"),
         ],
       ),
