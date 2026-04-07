@@ -46,3 +46,7 @@ app.*.map.json
 
 # Amplify設定（APIキー含む）
 lib/amplifyconfiguration.dart
+
+# 環境変数（APIキー）
+backend/.env
+.env
