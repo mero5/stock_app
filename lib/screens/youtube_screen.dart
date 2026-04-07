@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import '../config/constants.dart';
+import '../services/auth_service.dart'; //  追加
+import '../services/channel_service.dart'; //  追加
 
 class YoutubeScreen extends StatefulWidget {
   const YoutubeScreen({super.key});
@@ -19,17 +21,40 @@ class _YoutubeScreenState extends State<YoutubeScreen>
   List<Map<String, String>> searchResults = [];
   bool isSearching = false;
 
-  // 登録チャンネル（今はローカル管理、後でDynamoDBに移行予定）
+  // 登録チャンネル
   List<Map<String, String>> registeredChannels = [];
+  bool isLoadingChannels = false; //  追加
 
   // 要約一覧
   List<Map<String, dynamic>> summaries = [];
   bool isLoadingSummaries = false;
 
+  String? _userId; //  追加
+
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 3, vsync: this);
+    _initUserId(); //  追加
+  }
+
+  //  追加: UserIdを取得してからDynamoDBのチャンネルを読み込む
+  Future<void> _initUserId() async {
+    final userId = await AuthService.getUserId();
+    setState(() => _userId = userId);
+    if (userId != null) {
+      _loadChannelsFromDb(userId);
+    }
+  }
+
+  //  追加: DynamoDBからチャンネル一覧を読み込む
+  Future<void> _loadChannelsFromDb(String userId) async {
+    setState(() => isLoadingChannels = true);
+    final channels = await ChannelService.getChannels(userId);
+    setState(() {
+      registeredChannels = channels;
+      isLoadingChannels = false;
+    });
   }
 
   @override
@@ -38,7 +63,7 @@ class _YoutubeScreenState extends State<YoutubeScreen>
     super.dispose();
   }
 
-  // チャンネル検索
+  // チャンネル検索（変更なし）
   Future<void> searchChannels(String query) async {
     if (query.isEmpty) {
       setState(() => searchResults = []);
@@ -71,8 +96,8 @@ class _YoutubeScreenState extends State<YoutubeScreen>
     }
   }
 
-  // チャンネル登録
-  void registerChannel(Map<String, String> channel) {
+  //  変更: チャンネル登録をDynamoDBに保存
+  Future<void> registerChannel(Map<String, String> channel) async {
     if (registeredChannels.any(
       (c) => c["channel_id"] == channel["channel_id"],
     )) {
@@ -81,20 +106,38 @@ class _YoutubeScreenState extends State<YoutubeScreen>
       ).showSnackBar(const SnackBar(content: Text("すでに登録済みです")));
       return;
     }
-    setState(() => registeredChannels.add(channel));
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text("${channel["name"]} を登録しました")));
+    if (_userId == null) return;
+
+    final success = await ChannelService.saveChannel(_userId!, channel);
+    if (success) {
+      setState(() => registeredChannels.add(channel));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text("${channel["name"]} を登録しました")));
+    } else {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text("登録に失敗しました")));
+    }
   }
 
-  // チャンネル削除
-  void deleteChannel(String channelId) {
-    setState(() {
-      registeredChannels.removeWhere((c) => c["channel_id"] == channelId);
-    });
+  //  変更: チャンネル削除をDynamoDBにも反映
+  Future<void> deleteChannel(String channelId) async {
+    if (_userId == null) return;
+
+    final success = await ChannelService.deleteChannel(_userId!, channelId);
+    if (success) {
+      setState(() {
+        registeredChannels.removeWhere((c) => c["channel_id"] == channelId);
+      });
+    } else {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text("削除に失敗しました")));
+    }
   }
 
-  // 字幕取得→要約
+  // 字幕取得→要約（変更なし）
   Future<Map<String, dynamic>> getSummary(Map<String, String> channel) async {
     try {
       final res = await http.get(
@@ -148,7 +191,7 @@ class _YoutubeScreenState extends State<YoutubeScreen>
     }
   }
 
-  // 全チャンネルの要約を取得
+  // 全チャンネルの要約を取得（変更なし）
   Future<void> loadSummaries() async {
     if (registeredChannels.isEmpty) {
       ScaffoldMessenger.of(
@@ -194,7 +237,7 @@ class _YoutubeScreenState extends State<YoutubeScreen>
     );
   }
 
-  // ① 検索タブ
+  // ① 検索タブ（変更なし）
   Widget _buildSearchTab() {
     return Padding(
       padding: const EdgeInsets.all(16),
@@ -247,7 +290,7 @@ class _YoutubeScreenState extends State<YoutubeScreen>
                     ),
                     onPressed: isRegistered
                         ? null
-                        : () => registerChannel(channel),
+                        : () => registerChannel(channel), //  async対応
                   ),
                 );
               },
@@ -258,8 +301,13 @@ class _YoutubeScreenState extends State<YoutubeScreen>
     );
   }
 
-  // ② 登録チャンネルタブ
+  // ② 登録チャンネルタブ（ ローディング表示を追加）
   Widget _buildRegisteredTab() {
+    //  追加: 初期読み込み中はインジケーターを表示
+    if (isLoadingChannels) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
     if (registeredChannels.isEmpty) {
       return const Center(
         child: Column(
@@ -297,14 +345,14 @@ class _YoutubeScreenState extends State<YoutubeScreen>
           ),
           trailing: IconButton(
             icon: const Icon(Icons.delete, color: Colors.red),
-            onPressed: () => deleteChannel(channel["channel_id"]!),
+            onPressed: () => deleteChannel(channel["channel_id"]!), //  async対応
           ),
         );
       },
     );
   }
 
-  // ③ 要約タブ
+  // ③ 要約タブ（変更なし）
   Widget _buildSummaryTab() {
     return Padding(
       padding: const EdgeInsets.all(16),
@@ -346,7 +394,6 @@ class _YoutubeScreenState extends State<YoutubeScreen>
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              // チャンネル名
                               Text(
                                 s["channel_name"] ?? "",
                                 style: const TextStyle(
@@ -356,7 +403,6 @@ class _YoutubeScreenState extends State<YoutubeScreen>
                                 ),
                               ),
                               const SizedBox(height: 4),
-                              // 動画タイトル
                               Text(
                                 s["title"] ?? "",
                                 style: const TextStyle(
@@ -367,18 +413,14 @@ class _YoutubeScreenState extends State<YoutubeScreen>
                                 overflow: TextOverflow.ellipsis,
                               ),
                               const SizedBox(height: 8),
-                              // 要約
                               Text(
                                 s["summary"] ?? "",
                                 style: const TextStyle(fontSize: 13),
                               ),
                               const SizedBox(height: 8),
-                              // YouTubeリンク
                               if (s["url"] != null && s["url"]!.isNotEmpty)
                                 TextButton.icon(
-                                  onPressed: () {
-                                    // URLを開く（後でurl_launcherを追加）
-                                  },
+                                  onPressed: () {},
                                   icon: const Icon(
                                     Icons.play_circle,
                                     color: Colors.red,

@@ -40,4 +40,16 @@ class AuthService {
   static Future<void> signOut() async {
     await Amplify.Auth.signOut();
   }
+
+  // Cognitoのsub（一意のユーザーID）を取得
+  static Future<String?> getUserId() async {
+    try {
+      final session = await Amplify.Auth.fetchAuthSession();
+      final cognitoSession = session as CognitoAuthSession;
+      return cognitoSession.userSubResult.value;
+    } catch (e) {
+      print('getUserId エラー: $e');
+      return null;
+    }
+  }
 }
