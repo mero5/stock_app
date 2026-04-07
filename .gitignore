@@ -43,3 +43,6 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Amplify設定（APIキー含む）
+lib/amplifyconfiguration.dart
