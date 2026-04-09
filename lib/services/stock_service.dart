@@ -142,4 +142,22 @@ class StockService {
     );
     return jsonDecode(res.body) as Map<String, dynamic>;
   }
+
+  static Future<List<Map<String, dynamic>>> getStockEvents(
+    List<String> codes,
+  ) async {
+    try {
+      final codesParam = codes.join(',');
+      final res = await http.get(
+        Uri.parse(
+          "${Constants.backendUrl}/stock/events?codes=${Uri.encodeComponent(codesParam)}",
+        ),
+      );
+      final List data = jsonDecode(res.body);
+      return List<Map<String, dynamic>>.from(data);
+    } catch (e) {
+      print('イベント取得エラー: $e');
+      return [];
+    }
+  }
 }

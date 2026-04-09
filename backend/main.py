@@ -197,6 +197,41 @@ def get_stock_detail(code: str):
             candle["ma5"] = round(sum(closes[max(0,i-4):i+1]) / min(i+1, 5), 2)
             candle["ma25"] = round(sum(closes[max(0,i-24):i+1]) / min(i+1, 25), 2)
 
+        # ボリンジャーバンド計算（20日）
+        for i, candle in enumerate(candles):
+            if i >= 19:
+                window = closes[i-19:i+1]
+                mean = sum(window) / 20
+                std = (sum((x - mean) ** 2 for x in window) / 20) ** 0.5
+                candle["bb_upper"] = round(mean + 2 * std, 2)
+                candle["bb_middle"] = round(mean, 2)
+                candle["bb_lower"] = round(mean - 2 * std, 2)
+            else:
+                candle["bb_upper"] = None
+                candle["bb_middle"] = None
+                candle["bb_lower"] = None
+
+        # MACD計算
+        def ema_series(data, period):
+            result = [None] * (period - 1)
+            k = 2 / (period + 1)
+            val = sum(data[:period]) / period
+            result.append(round(val, 2))
+            for v in data[period:]:
+                val = v * k + val * (1 - k)
+                result.append(round(val, 2))
+            return result
+
+        ema12_series = ema_series(closes, 12)
+        ema26_series = ema_series(closes, 26)
+        for i, candle in enumerate(candles):
+            e12 = ema12_series[i]
+            e26 = ema26_series[i]
+            if e12 is not None and e26 is not None:
+                candle["macd"] = round(e12 - e26, 2)
+            else:
+                candle["macd"] = None
+
         # RSI計算（14日間）
         def calc_rsi(closes, period=14):
             if len(closes) < period + 1:
@@ -254,6 +289,9 @@ def get_stock_detail(code: str):
             "market_cap": clean_value(info.get("marketCap")),
             "dividend_yield": clean_value(info.get("dividendYield")),
             "roe": clean_value(info.get("returnOnEquity")),
+            "roa": clean_value(info.get("returnOnAssets")),
+            "revenue_growth": clean_value(info.get("revenueGrowth")),
+            "debt_to_equity": clean_value(info.get("debtToEquity")),
             "candles": [
                 {k: clean_value(v) for k, v in c.items()}
                 for c in candles
@@ -454,6 +492,89 @@ def get_latest_video(channel_id: str):
     except Exception as e:
         print(f"最新動画取得エラー: {e}")
         return {"error": str(e)}
+
+# ===================================================
+# 銘柄イベント取得API
+# ===================================================
+
+@app.get("/stock/events")
+def get_stock_events(codes: str):
+    """
+    ウォッチリスト銘柄のイベント（決算・配当）を取得
+    codes: カンマ区切りの銘柄コード
+    """
+    result = []
+    for code in codes.split(","):
+        code = code.strip()
+        if not code:
+            continue
+        try:
+            if code.isdigit():
+                yf_code = code[:-1] if len(code) == 5 else code
+                ticker = yf.Ticker(f"{yf_code}.T")
+            else:
+                ticker = yf.Ticker(code)
+
+            info = ticker.info
+            name = info.get("longName") or info.get("shortName") or code
+
+            # 決算発表日
+            earnings_date = None
+            try:
+                cal = ticker.calendar
+                if cal is not None and not cal.empty:
+                    ed = cal.get("Earnings Date")
+                    if ed is not None and len(ed) > 0:
+                        earnings_date = str(ed.iloc[0].date()) if hasattr(ed.iloc[0], 'date') else str(ed.iloc[0])
+            except Exception:
+                pass
+
+            # 配当関連
+            ex_dividend = None
+            dividend_date = None
+            try:
+                ex_div = info.get("exDividendDate")
+                if ex_div:
+                    import datetime
+                    ex_dividend = str(datetime.datetime.fromtimestamp(ex_div).date())
+                div_date = info.get("lastDividendDate") or info.get("nextDividendDate")
+                if div_date:
+                    dividend_date = str(datetime.datetime.fromtimestamp(div_date).date())
+            except Exception:
+                pass
+
+            if earnings_date:
+                result.append({
+                    "code": code,
+                    "name": name,
+                    "date": earnings_date,
+                    "type": "earnings",
+                    "label": f"{name} 決算発表",
+                    "color": "red",
+                })
+            if ex_dividend:
+                result.append({
+                    "code": code,
+                    "name": name,
+                    "date": ex_dividend,
+                    "type": "ex_dividend",
+                    "label": f"{name} 配当落ち日",
+                    "color": "blue",
+                })
+            if dividend_date and dividend_date != ex_dividend:
+                result.append({
+                    "code": code,
+                    "name": name,
+                    "date": dividend_date,
+                    "type": "dividend",
+                    "label": f"{name} 配当支払日",
+                    "color": "green",
+                })
+
+        except Exception as e:
+            print(f"イベント取得エラー {code}: {e}")
+
+    return result
 
 # ===================================================
 # AI分析API（テクニカル・ファンダ・ニュース）

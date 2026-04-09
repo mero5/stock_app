@@ -8,6 +8,7 @@ import 'login_screen.dart';
 import 'search_screen.dart';
 import 'detail_screen.dart';
 import 'youtube_screen.dart';
+import 'schedule_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -178,7 +179,8 @@ class _HomeScreenState extends State<HomeScreen> {
               setState(() => _currentIndex = 0);
             },
           ),
-          const YoutubeScreen(), // ← 追加
+          const YoutubeScreen(),
+          const ScheduleScreen(),
           Center(
             child: ElevatedButton(
               onPressed: () async {
@@ -195,6 +197,7 @@ class _HomeScreenState extends State<HomeScreen> {
         ],
       ),
       bottomNavigationBar: BottomNavigationBar(
+        type: BottomNavigationBarType.fixed,
         currentIndex: _currentIndex,
         onTap: (index) async {
           if (index == 0) await loadFavorites();
@@ -210,6 +213,10 @@ class _HomeScreenState extends State<HomeScreen> {
           BottomNavigationBarItem(
             icon: Icon(Icons.play_circle),
             label: "YouTube",
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.calendar_month),
+            label: "スケジュール",
           ),
           BottomNavigationBarItem(icon: Icon(Icons.logout), label: "ログアウト"),
         ],

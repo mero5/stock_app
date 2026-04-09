@@ -24,22 +24,22 @@ class _YoutubeScreenState extends State<YoutubeScreen>
 
   // 登録チャンネル
   List<Map<String, String>> registeredChannels = [];
-  bool isLoadingChannels = false; //  追加
+  bool isLoadingChannels = false;
 
   // 要約一覧
   List<Map<String, dynamic>> summaries = [];
   bool isLoadingSummaries = false;
 
-  String? _userId; //  追加
+  String? _userId;
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 3, vsync: this);
-    _initUserId(); //  追加
+    _initUserId();
   }
 
-  //  追加: UserIdを取得してからDynamoDBのチャンネルを読み込む
+  // UserIdを取得してからDynamoDBのチャンネルを読み込む
   Future<void> _initUserId() async {
     final userId = await AuthService.getUserId();
     setState(() => _userId = userId);
@@ -48,7 +48,7 @@ class _YoutubeScreenState extends State<YoutubeScreen>
     }
   }
 
-  //  追加: DynamoDBからチャンネル一覧を読み込む
+  //  DynamoDBからチャンネル一覧を読み込む
   Future<void> _loadChannelsFromDb(String userId) async {
     setState(() => isLoadingChannels = true);
     final channels = await ChannelService.getChannels(userId);
@@ -182,7 +182,7 @@ class _YoutubeScreenState extends State<YoutubeScreen>
       );
       final summaryData = jsonDecode(summaryRes.body);
 
-      // バックエンドから返ってきたJSONをそのまま使い、channel_nameとtitleを追加
+      // バックエンドから返ってきたJSONをそのまま使い、channel_nameとtitle
       return {
         "channel_name": channel["name"],
         "title": title,
@@ -318,9 +318,9 @@ class _YoutubeScreenState extends State<YoutubeScreen>
     );
   }
 
-  // ② 登録チャンネルタブ（ ローディング表示を追加）
+  // ② 登録チャンネルタブ（ ローディング表示）
   Widget _buildRegisteredTab() {
-    //  追加: 初期読み込み中はインジケーターを表示
+    // 初期読み込み中はインジケーターを表示
     if (isLoadingChannels) {
       return const Center(child: CircularProgressIndicator());
     }

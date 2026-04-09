@@ -12,10 +12,10 @@ class ChannelService {
 
   /// チャンネル一覧をDynamoDBから取得
   static Future<List<Map<String, String>>> getChannels(String userId) async {
-    print('🔍 getChannels userId: $userId'); // ← 追加
+    print('🔍 getChannels userId: $userId');
     try {
       final res = await http.get(Uri.parse('$_getUrl?userId=$userId'));
-      print('🔍 response: ${res.statusCode} ${res.body}'); // ← 追加
+      print('🔍 response: ${res.statusCode} ${res.body}');
       if (res.statusCode == 200) {
         final data = jsonDecode(res.body);
         return List<Map<String, String>>.from(

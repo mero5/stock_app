@@ -152,24 +152,59 @@ class _DetailScreenState extends State<DetailScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // ローソク足
           const Text(
             "ローソク足チャート",
-            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 4),
           _buildCandleChart(candles),
           const SizedBox(height: 16),
+
+          // MA折れ線チャート（日付付き）
           const Text(
-            "RSI",
-            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+            "移動平均線 (MA5 / MA25)",
+            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+          ),
+          const SizedBox(height: 4),
+          _buildMaChart(candles),
+          const SizedBox(height: 16),
+
+          // ボリンジャーバンド
+          const Text(
+            "ボリンジャーバンド (±2σ)",
+            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+          ),
+          const SizedBox(height: 4),
+          _buildBollingerChart(candles),
+          const SizedBox(height: 16),
+
+          // RSI
+          const Text(
+            "RSI (14)",
+            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
           ),
           const SizedBox(height: 4),
           const Text(
             "30以下：売られすぎ  70以上：買われすぎ",
             style: TextStyle(fontSize: 11, color: Colors.grey),
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 4),
           _buildRsiChart(candles),
+          const SizedBox(height: 16),
+
+          // MACD
+          const Text(
+            "MACD (12/26)",
+            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+          ),
+          const SizedBox(height: 4),
+          const Text(
+            "0より上：買いシグナル  0より下：売りシグナル",
+            style: TextStyle(fontSize: 11, color: Colors.grey),
+          ),
+          const SizedBox(height: 4),
+          _buildMacdChart(candles),
         ],
       ),
     );
@@ -213,6 +248,9 @@ class _DetailScreenState extends State<DetailScreen> {
     final pbr = detail!['pbr'];
     final dividendYield = detail!['dividend_yield'];
     final roe = detail!['roe'];
+    final roa = detail!['roa'];
+    final revenueGrowth = detail!['revenue_growth'];
+    final debtToEquity = detail!['debt_to_equity'];
 
     // ── スコア計算 ──
     int score = 0;
@@ -311,6 +349,38 @@ class _DetailScreenState extends State<DetailScreen> {
       "value": macdLabel,
       "color": macdColor,
     });
+
+    // ボリンジャーバンド判定
+    final bbUpper = (candles.last['bb_upper'] as num?)?.toDouble();
+    final bbLower = (candles.last['bb_lower'] as num?)?.toDouble();
+    if (bbUpper != null && bbLower != null) {
+      String bbLabel;
+      Color bbColor;
+      int bbScore = 0;
+      if (latest <= bbLower) {
+        bbLabel = "下限タッチ（反発の可能性）";
+        bbColor = Colors.red;
+        bbScore = 15;
+      } else if (latest >= bbUpper) {
+        bbLabel = "上限タッチ（過熱注意）";
+        bbColor = Colors.green;
+        bbScore = 0;
+      } else if (latest < (bbUpper + bbLower) / 2) {
+        bbLabel = "バンド下半分";
+        bbColor = Colors.orange;
+        bbScore = 8;
+      } else {
+        bbLabel = "バンド上半分";
+        bbColor = Colors.teal;
+        bbScore = 5;
+      }
+      score += bbScore;
+      technicalSignals.add({
+        "label": "ボリンジャーバンド",
+        "value": bbLabel,
+        "color": bbColor,
+      });
+    }
 
     // 価格帯
     String priceLabel;
@@ -454,6 +524,83 @@ class _DetailScreenState extends State<DetailScreen> {
       }
       score += s;
       fundamentalSignals.add({"label": "配当利回り", "value": l, "color": c});
+    }
+
+    // ROA
+    if (roa != null) {
+      final v = (roa as num).toDouble() * 100;
+      String l;
+      Color c;
+      int s = 0;
+      if (v >= 10) {
+        l = "高ROA（優良）";
+        c = Colors.red;
+        s = 8;
+      } else if (v >= 5) {
+        l = "標準的";
+        c = Colors.grey;
+        s = 4;
+      } else {
+        l = "低ROA（注意）";
+        c = Colors.green;
+        s = 0;
+      }
+      score += s;
+      fundamentalSignals.add({
+        "label": "ROA (${v.toStringAsFixed(1)}%)",
+        "value": l,
+        "color": c,
+      });
+    }
+
+    // 売上成長率
+    if (revenueGrowth != null) {
+      final v = (revenueGrowth as num).toDouble() * 100;
+      String l;
+      Color c;
+      int s = 0;
+      if (v >= 10) {
+        l = "高成長（${v.toStringAsFixed(1)}%）";
+        c = Colors.red;
+        s = 8;
+      } else if (v >= 0) {
+        l = "微増（${v.toStringAsFixed(1)}%）";
+        c = Colors.orange;
+        s = 4;
+      } else {
+        l = "減収（${v.toStringAsFixed(1)}%）";
+        c = Colors.green;
+        s = 0;
+      }
+      score += s;
+      fundamentalSignals.add({"label": "売上成長率", "value": l, "color": c});
+    }
+
+    // 自己資本比率（D/E逆算）
+    if (debtToEquity != null) {
+      final v = (debtToEquity as num).toDouble();
+      String l;
+      Color c;
+      int s = 0;
+      if (v <= 50) {
+        l = "低負債（安全）";
+        c = Colors.red;
+        s = 8;
+      } else if (v <= 150) {
+        l = "標準的";
+        c = Colors.grey;
+        s = 4;
+      } else {
+        l = "高負債（注意）";
+        c = Colors.green;
+        s = 0;
+      }
+      score += s;
+      fundamentalSignals.add({
+        "label": "負債比率 D/E (${v.toStringAsFixed(0)}%)",
+        "value": l,
+        "color": c,
+      });
     }
 
     // 総合判定
@@ -1287,6 +1434,315 @@ class _DetailScreenState extends State<DetailScreen> {
               color: Colors.purple,
               barWidth: 2,
               dotData: const FlDotData(show: false),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // 日付ラベル生成ヘルパー
+  String _dateLabel(String dateStr) {
+    try {
+      final dt = DateTime.parse(dateStr);
+      return "${dt.month}/${dt.day}";
+    } catch (_) {
+      return '';
+    }
+  }
+
+  // MA折れ線チャート（日付軸付き）
+  Widget _buildMaChart(List<Map<String, dynamic>> candles) {
+    if (candles.isEmpty) return const Text("データなし");
+    final data = candles.length > 60
+        ? candles.sublist(candles.length - 60)
+        : candles;
+
+    final closeSpots = data
+        .asMap()
+        .entries
+        .map(
+          (e) => FlSpot(e.key.toDouble(), (e.value['close'] as num).toDouble()),
+        )
+        .toList();
+    final ma5Spots = data
+        .asMap()
+        .entries
+        .where((e) => e.value['ma5'] != null)
+        .map(
+          (e) => FlSpot(e.key.toDouble(), (e.value['ma5'] as num).toDouble()),
+        )
+        .toList();
+    final ma25Spots = data
+        .asMap()
+        .entries
+        .where((e) => e.value['ma25'] != null)
+        .map(
+          (e) => FlSpot(e.key.toDouble(), (e.value['ma25'] as num).toDouble()),
+        )
+        .toList();
+
+    // 日付ラベル（10本おき）
+    final labelIndices = <int>{0, data.length ~/ 2, data.length - 1};
+
+    return SizedBox(
+      height: 200,
+      child: LineChart(
+        LineChartData(
+          gridData: FlGridData(show: true, drawVerticalLine: false),
+          borderData: FlBorderData(show: false),
+          titlesData: FlTitlesData(
+            bottomTitles: AxisTitles(
+              sideTitles: SideTitles(
+                showTitles: true,
+                reservedSize: 24,
+                getTitlesWidget: (value, meta) {
+                  final i = value.toInt();
+                  if (!labelIndices.contains(i) || i >= data.length)
+                    return const SizedBox();
+                  return Text(
+                    _dateLabel(data[i]['date']),
+                    style: const TextStyle(fontSize: 9, color: Colors.grey),
+                  );
+                },
+              ),
+            ),
+            leftTitles: AxisTitles(
+              sideTitles: SideTitles(
+                showTitles: true,
+                reservedSize: 50,
+                getTitlesWidget: (value, meta) => Text(
+                  value.toInt().toString(),
+                  style: const TextStyle(fontSize: 9, color: Colors.grey),
+                ),
+              ),
+            ),
+            rightTitles: const AxisTitles(
+              sideTitles: SideTitles(showTitles: false),
+            ),
+            topTitles: const AxisTitles(
+              sideTitles: SideTitles(showTitles: false),
+            ),
+          ),
+          lineBarsData: [
+            LineChartBarData(
+              spots: closeSpots,
+              color: Colors.black54,
+              barWidth: 1,
+              dotData: const FlDotData(show: false),
+            ),
+            LineChartBarData(
+              spots: ma5Spots,
+              color: Colors.blue,
+              barWidth: 1.5,
+              dotData: const FlDotData(show: false),
+            ),
+            LineChartBarData(
+              spots: ma25Spots,
+              color: Colors.orange,
+              barWidth: 1.5,
+              dotData: const FlDotData(show: false),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ボリンジャーバンドチャート
+  Widget _buildBollingerChart(List<Map<String, dynamic>> candles) {
+    if (candles.isEmpty) return const Text("データなし");
+    final data = candles.length > 60
+        ? candles.sublist(candles.length - 60)
+        : candles;
+
+    final closeSpots = data
+        .asMap()
+        .entries
+        .map(
+          (e) => FlSpot(e.key.toDouble(), (e.value['close'] as num).toDouble()),
+        )
+        .toList();
+    final upperSpots = data
+        .asMap()
+        .entries
+        .where((e) => e.value['bb_upper'] != null)
+        .map(
+          (e) =>
+              FlSpot(e.key.toDouble(), (e.value['bb_upper'] as num).toDouble()),
+        )
+        .toList();
+    final middleSpots = data
+        .asMap()
+        .entries
+        .where((e) => e.value['bb_middle'] != null)
+        .map(
+          (e) => FlSpot(
+            e.key.toDouble(),
+            (e.value['bb_middle'] as num).toDouble(),
+          ),
+        )
+        .toList();
+    final lowerSpots = data
+        .asMap()
+        .entries
+        .where((e) => e.value['bb_lower'] != null)
+        .map(
+          (e) =>
+              FlSpot(e.key.toDouble(), (e.value['bb_lower'] as num).toDouble()),
+        )
+        .toList();
+
+    final labelIndices = <int>{0, data.length ~/ 2, data.length - 1};
+
+    return SizedBox(
+      height: 200,
+      child: LineChart(
+        LineChartData(
+          gridData: FlGridData(show: true, drawVerticalLine: false),
+          borderData: FlBorderData(show: false),
+          titlesData: FlTitlesData(
+            bottomTitles: AxisTitles(
+              sideTitles: SideTitles(
+                showTitles: true,
+                reservedSize: 24,
+                getTitlesWidget: (value, meta) {
+                  final i = value.toInt();
+                  if (!labelIndices.contains(i) || i >= data.length)
+                    return const SizedBox();
+                  return Text(
+                    _dateLabel(data[i]['date']),
+                    style: const TextStyle(fontSize: 9, color: Colors.grey),
+                  );
+                },
+              ),
+            ),
+            leftTitles: AxisTitles(
+              sideTitles: SideTitles(
+                showTitles: true,
+                reservedSize: 50,
+                getTitlesWidget: (value, meta) => Text(
+                  value.toInt().toString(),
+                  style: const TextStyle(fontSize: 9, color: Colors.grey),
+                ),
+              ),
+            ),
+            rightTitles: const AxisTitles(
+              sideTitles: SideTitles(showTitles: false),
+            ),
+            topTitles: const AxisTitles(
+              sideTitles: SideTitles(showTitles: false),
+            ),
+          ),
+          lineBarsData: [
+            LineChartBarData(
+              spots: upperSpots,
+              color: Colors.red.withOpacity(0.5),
+              barWidth: 1,
+              dotData: const FlDotData(show: false),
+              dashArray: [4, 4],
+            ),
+            LineChartBarData(
+              spots: middleSpots,
+              color: Colors.grey,
+              barWidth: 1,
+              dotData: const FlDotData(show: false),
+              dashArray: [4, 4],
+            ),
+            LineChartBarData(
+              spots: lowerSpots,
+              color: Colors.blue.withOpacity(0.5),
+              barWidth: 1,
+              dotData: const FlDotData(show: false),
+              dashArray: [4, 4],
+            ),
+            LineChartBarData(
+              spots: closeSpots,
+              color: Colors.black87,
+              barWidth: 1.5,
+              dotData: const FlDotData(show: false),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // MACDチャート
+  Widget _buildMacdChart(List<Map<String, dynamic>> candles) {
+    if (candles.isEmpty) return const Text("データなし");
+    final data = candles.length > 60
+        ? candles.sublist(candles.length - 60)
+        : candles;
+
+    final macdSpots = data
+        .asMap()
+        .entries
+        .where((e) => e.value['macd'] != null)
+        .map(
+          (e) => FlSpot(e.key.toDouble(), (e.value['macd'] as num).toDouble()),
+        )
+        .toList();
+
+    if (macdSpots.isEmpty) return const Text("MACDデータなし");
+
+    final labelIndices = <int>{0, data.length ~/ 2, data.length - 1};
+
+    return SizedBox(
+      height: 120,
+      child: LineChart(
+        LineChartData(
+          gridData: FlGridData(
+            show: true,
+            getDrawingHorizontalLine: (value) => FlLine(
+              color: value == 0 ? Colors.red : Colors.grey.withOpacity(0.3),
+              strokeWidth: value == 0 ? 1.5 : 0.5,
+            ),
+          ),
+          borderData: FlBorderData(show: false),
+          titlesData: FlTitlesData(
+            bottomTitles: AxisTitles(
+              sideTitles: SideTitles(
+                showTitles: true,
+                reservedSize: 24,
+                getTitlesWidget: (value, meta) {
+                  final i = value.toInt();
+                  if (!labelIndices.contains(i) || i >= data.length)
+                    return const SizedBox();
+                  return Text(
+                    _dateLabel(data[i]['date']),
+                    style: const TextStyle(fontSize: 9, color: Colors.grey),
+                  );
+                },
+              ),
+            ),
+            leftTitles: AxisTitles(
+              sideTitles: SideTitles(
+                showTitles: true,
+                reservedSize: 40,
+                getTitlesWidget: (value, meta) => Text(
+                  value.toStringAsFixed(0),
+                  style: const TextStyle(fontSize: 9, color: Colors.grey),
+                ),
+              ),
+            ),
+            rightTitles: const AxisTitles(
+              sideTitles: SideTitles(showTitles: false),
+            ),
+            topTitles: const AxisTitles(
+              sideTitles: SideTitles(showTitles: false),
+            ),
+          ),
+          lineBarsData: [
+            LineChartBarData(
+              spots: macdSpots,
+              color: Colors.purple,
+              barWidth: 2,
+              dotData: const FlDotData(show: false),
+              belowBarData: BarAreaData(
+                show: true,
+                color: Colors.purple.withOpacity(0.1),
+              ),
             ),
           ],
         ),
