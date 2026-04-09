@@ -988,6 +988,7 @@ class _DetailScreenState extends State<DetailScreen> {
 
   Widget _aiNewsItem(Map<String, dynamic> n) {
     final title = n['title'] as String? ?? '';
+    final summary = n['summary'] as String? ?? '';
     final provider = n['provider'] as String? ?? '';
     final pubDate = n['pub_date'] as String? ?? '';
     String dateStr = '';
@@ -999,33 +1000,100 @@ class _DetailScreenState extends State<DetailScreen> {
             "${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}";
       } catch (_) {}
     }
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Icon(Icons.article_outlined, size: 16, color: Colors.blue),
-          const SizedBox(width: 8),
-          Expanded(
+
+    return InkWell(
+      onTap: () {
+        showModalBottomSheet(
+          context: context,
+          isScrollControlled: true,
+          shape: const RoundedRectangleBorder(
+            borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+          ),
+          builder: (_) => Padding(
+            padding: const EdgeInsets.all(20),
             child: Column(
+              mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                // タイトル
                 Text(
                   title,
                   style: const TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold,
                   ),
                 ),
+                const SizedBox(height: 6),
+                // 媒体名・日時
                 if (provider.isNotEmpty || dateStr.isNotEmpty)
                   Text(
                     "$provider　$dateStr",
                     style: const TextStyle(fontSize: 11, color: Colors.grey),
                   ),
+                const SizedBox(height: 12),
+                const Divider(),
+                const SizedBox(height: 8),
+                // AI要約（summaryがあれば）
+                if (summary.isNotEmpty) ...[
+                  const Text(
+                    "📝 AIによる要約",
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.blue,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    summary,
+                    style: const TextStyle(
+                      fontSize: 13,
+                      color: Colors.black87,
+                      height: 1.6,
+                    ),
+                  ),
+                ] else
+                  const Text(
+                    "詳細な要約はありません",
+                    style: TextStyle(fontSize: 13, color: Colors.grey),
+                  ),
+                const SizedBox(height: 20),
               ],
             ),
           ),
-        ],
+        );
+      },
+      child: Padding(
+        padding: const EdgeInsets.only(bottom: 10),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Icon(Icons.article_outlined, size: 16, color: Colors.blue),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  if (provider.isNotEmpty || dateStr.isNotEmpty)
+                    Text(
+                      "$provider　$dateStr",
+                      style: const TextStyle(fontSize: 11, color: Colors.grey),
+                    ),
+                ],
+              ),
+            ),
+            const Icon(Icons.chevron_right, size: 16, color: Colors.grey),
+          ],
+        ),
       ),
     );
   }

@@ -494,11 +494,14 @@ async def get_ai_analysis(code: str):
                     "pub_date": pub_date,
                 })
 
-        # ── ChatGPTでニュースタイトルを日本語翻訳 ──
+        # ── ChatGPTでニュースタイトルと要約を日本語翻訳 ──
         if news_items:
-            titles_en = [n['title'] for n in news_items]
             try:
-                translation_res = openai_client.chat.completions.create(
+                titles_en = [n['title'] for n in news_items]
+                summaries_en = [n['summary'] for n in news_items]
+
+                # タイトル翻訳
+                title_res = openai_client.chat.completions.create(
                     model="gpt-4o-mini",
                     messages=[
                         {
@@ -512,14 +515,39 @@ async def get_ai_analysis(code: str):
                     ],
                     max_tokens=500,
                 )
-                raw_titles = translation_res.choices[0].message.content.strip()
+                raw_titles = title_res.choices[0].message.content.strip()
                 raw_titles = raw_titles.replace("```json", "").replace("```", "").strip()
                 titles_ja = json.loads(raw_titles)
                 for i, n in enumerate(news_items):
                     if i < len(titles_ja):
                         n['title'] = titles_ja[i]
+
+                # 要約翻訳
+                summary_res = openai_client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": "株式ニュースの要約文を日本語に翻訳してください。JSON配列のみ返してください。空文字はそのまま空文字で返してください。例：[\"翻訳1\", \"翻訳2\"]"
+                        },
+                        {
+                            "role": "user",
+                            "content": str(summaries_en)
+                        }
+                    ],
+                    max_tokens=1000,
+                )
+                raw_summaries = summary_res.choices[0].message.content.strip()
+                raw_summaries = raw_summaries.replace("```json", "").replace("```", "").strip()
+                summaries_ja = json.loads(raw_summaries)
+                for i, n in enumerate(news_items):
+                    if i < len(summaries_ja):
+                        n['summary'] = summaries_ja[i]
+
             except Exception as e:
                 print(f"翻訳エラー: {e}")
+
+
         # ── テクニカル計算 ──
         closes = hist["Close"].tolist() if not hist.empty else []
         highs  = hist["High"].tolist()  if not hist.empty else []
