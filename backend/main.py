@@ -13,6 +13,7 @@ from openai import OpenAI
 import google.generativeai as genai
 from dotenv import load_dotenv
 import os
+import json
 
 # ===================================================
 # APIキー設定
@@ -251,6 +252,8 @@ def get_stock_detail(code: str):
             "per": clean_value(info.get("trailingPE")),
             "pbr": clean_value(info.get("priceToBook")),
             "market_cap": clean_value(info.get("marketCap")),
+            "dividend_yield": clean_value(info.get("dividendYield")),
+            "roe": clean_value(info.get("returnOnEquity")),
             "candles": [
                 {k: clean_value(v) for k, v in c.items()}
                 for c in candles
@@ -384,7 +387,6 @@ async def summarize_video(request: Request):
         )
         raw = response.text.strip()
         raw = raw.replace("```json", "").replace("```", "").strip()
-        import json
         parsed = json.loads(raw)
         return parsed
     except Exception as e:
@@ -451,4 +453,301 @@ def get_latest_video(channel_id: str):
         }
     except Exception as e:
         print(f"最新動画取得エラー: {e}")
+        return {"error": str(e)}
+
+# ===================================================
+# AI分析API（テクニカル・ファンダ・ニュース）
+# ===================================================
+
+@app.get("/stock/ai_analysis")
+async def get_ai_analysis(code: str):
+    try:
+        if code.isdigit():
+            yf_code = code[:-1] if len(code) == 5 else code
+            ticker = yf.Ticker(f"{yf_code}.T")
+        else:
+            ticker = yf.Ticker(code)
+
+        info = ticker.info
+        hist = ticker.history(period="3mo")
+        raw_news = ticker.news[:5] if ticker.news else []
+
+        # ── ニュース整形 ──
+        news_items = []
+        for n in raw_news:
+            content = n.get("content", {})
+            if not isinstance(content, dict):
+                continue
+            title = content.get("title", "")
+            summary = content.get("summary", "")
+            provider = ""
+            pub_date = ""
+            provider_info = content.get("provider", {})
+            if isinstance(provider_info, dict):
+                provider = provider_info.get("displayName", "")
+            pub_date = content.get("pubDate", "")
+            if title:
+                news_items.append({
+                    "title": title,
+                    "summary": summary,
+                    "provider": provider,
+                    "pub_date": pub_date,
+                })
+
+        # ── ChatGPTでニュースタイトルを日本語翻訳 ──
+        if news_items:
+            titles_en = [n['title'] for n in news_items]
+            try:
+                translation_res = openai_client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": "株式ニュースのタイトルを日本語に翻訳してください。JSON配列のみ返してください。例：[\"翻訳1\", \"翻訳2\"]"
+                        },
+                        {
+                            "role": "user",
+                            "content": str(titles_en)
+                        }
+                    ],
+                    max_tokens=500,
+                )
+                raw_titles = translation_res.choices[0].message.content.strip()
+                raw_titles = raw_titles.replace("```json", "").replace("```", "").strip()
+                titles_ja = json.loads(raw_titles)
+                for i, n in enumerate(news_items):
+                    if i < len(titles_ja):
+                        n['title'] = titles_ja[i]
+            except Exception as e:
+                print(f"翻訳エラー: {e}")
+        # ── テクニカル計算 ──
+        closes = hist["Close"].tolist() if not hist.empty else []
+        highs  = hist["High"].tolist()  if not hist.empty else []
+        lows   = hist["Low"].tolist()   if not hist.empty else []
+
+        current_price = closes[-1] if closes else None
+        ma5  = round(sum(closes[-5:])  / min(len(closes), 5),  2) if closes else None
+        ma25 = round(sum(closes[-25:]) / min(len(closes), 25), 2) if closes else None
+
+        def ema(data, period):
+            if len(data) < period:
+                return None
+            k = 2 / (period + 1)
+            val = sum(data[:period]) / period
+            for v in data[period:]:
+                val = v * k + val * (1 - k)
+            return round(val, 2)
+
+        ema12 = ema(closes, 12)
+        ema26 = ema(closes, 26)
+        macd  = round(ema12 - ema26, 2) if ema12 and ema26 else None
+
+        rsi = None
+        if len(closes) >= 15:
+            period = 14
+            gains, losses = [], []
+            for i in range(1, period + 1):
+                diff = closes[-period - 1 + i] - closes[-period - 2 + i]
+                gains.append(max(diff, 0))
+                losses.append(max(-diff, 0))
+            avg_gain = sum(gains) / period
+            avg_loss = sum(losses) / period
+            if avg_loss != 0:
+                rsi = round(100 - (100 / (1 + avg_gain / avg_loss)), 1)
+            else:
+                rsi = 100.0
+
+        high52 = round(max(highs), 2) if highs else None
+        low52  = round(min(lows),  2) if lows  else None
+
+        per            = clean_value(info.get("trailingPE"))
+        pbr            = clean_value(info.get("priceToBook"))
+        market_cap     = clean_value(info.get("marketCap"))
+        dividend_yield = clean_value(info.get("dividendYield"))
+        roe            = clean_value(info.get("returnOnEquity"))
+        revenue_growth = clean_value(info.get("revenueGrowth"))
+        name           = info.get("longName") or info.get("shortName") or code
+
+        news_text = "\n".join([
+            f"・{n['title']}（{n['provider']}）"
+            for n in news_items if n['title']
+        ]) or "ニュースなし"
+
+        prompt = f"""
+以下の株式データを分析して、必ずJSON形式のみで返してください。前置きや説明文は不要です。
+
+銘柄名: {name}
+現在株価: {current_price}
+MA5: {ma5} / MA25: {ma25}
+RSI(14): {rsi}
+MACD: {macd}
+52週高値: {high52} / 52週安値: {low52}
+PER: {per} / PBR: {pbr}
+時価総額: {market_cap}
+配当利回り: {dividend_yield}
+ROE: {roe}
+売上成長率: {revenue_growth}
+
+最近のニュース:
+{news_text}
+
+以下のJSON形式で回答してください：
+{{
+  "overall_score": 1〜100の整数（総合投資スコア）,
+  "overall_judgment": "buy" か "sell" か "hold" か "watch" のいずれか,
+  "overall_reason": "総合判断の理由を2〜3文で（日本語）",
+  "news_summary": "ニュース全体の要約を2〜3文で（日本語）",
+  "news_sentiment": "positive" か "negative" か "neutral" のいずれか,
+  "news_sentiment_reason": "ニュースのセンチメント判断理由（日本語）",
+  "risks": ["リスク1（日本語）", "リスク2（日本語）"],
+  "opportunities": ["機会1（日本語）", "機会2（日本語）"]
+}}
+"""
+
+        model = genai.GenerativeModel("gemini-2.5-flash")
+        response = model.generate_content(
+            [{"role": "user", "parts": [{"text": prompt}]}]
+        )
+        raw = response.text.strip()
+        raw = raw.replace("```json", "").replace("```", "").strip()
+        analysis = json.loads(raw)
+
+        return {
+            "code": code,
+            "name": name,
+            "price": current_price,
+            "ma5": ma5,
+            "ma25": ma25,
+            "rsi": rsi,
+            "macd": macd,
+            "high52": high52,
+            "low52": low52,
+            "per": per,
+            "pbr": pbr,
+            "market_cap": market_cap,
+            "dividend_yield": dividend_yield,
+            "roe": roe,
+            "revenue_growth": revenue_growth,
+            "news": news_items,
+            "analysis": analysis,
+        }
+
+    except Exception as e:
+        print(f"AI分析エラー: {e}")
+        return {"error": str(e)}
+
+        # ── テクニカル計算 ──
+        closes = hist["Close"].tolist() if not hist.empty else []
+        highs  = hist["High"].tolist()  if not hist.empty else []
+        lows   = hist["Low"].tolist()   if not hist.empty else []
+
+        current_price = closes[-1] if closes else None
+        ma5  = round(sum(closes[-5:])  / min(len(closes), 5),  2) if closes else None
+        ma25 = round(sum(closes[-25:]) / min(len(closes), 25), 2) if closes else None
+
+        def ema(data, period):
+            if len(data) < period:
+                return None
+            k = 2 / (period + 1)
+            val = sum(data[:period]) / period
+            for v in data[period:]:
+                val = v * k + val * (1 - k)
+            return round(val, 2)
+
+        ema12 = ema(closes, 12)
+        ema26 = ema(closes, 26)
+        macd  = round(ema12 - ema26, 2) if ema12 and ema26 else None
+
+        rsi = None
+        if len(closes) >= 15:
+            period = 14
+            gains, losses = [], []
+            for i in range(1, period + 1):
+                diff = closes[-period - 1 + i] - closes[-period - 2 + i]
+                gains.append(max(diff, 0))
+                losses.append(max(-diff, 0))
+            avg_gain = sum(gains) / period
+            avg_loss = sum(losses) / period
+            if avg_loss != 0:
+                rsi = round(100 - (100 / (1 + avg_gain / avg_loss)), 1)
+            else:
+                rsi = 100.0
+
+        high52 = round(max(highs), 2) if highs else None
+        low52  = round(min(lows),  2) if lows  else None
+
+        per            = clean_value(info.get("trailingPE"))
+        pbr            = clean_value(info.get("priceToBook"))
+        market_cap     = clean_value(info.get("marketCap"))
+        dividend_yield = clean_value(info.get("dividendYield"))
+        roe            = clean_value(info.get("returnOnEquity"))
+        revenue_growth = clean_value(info.get("revenueGrowth"))
+        name           = info.get("longName") or info.get("shortName") or code
+
+        news_text = "\n".join([
+            f"・{n['title']}（{n['provider']}）"
+            for n in news_items if n['title']
+        ]) or "ニュースなし"
+
+        prompt = f"""
+以下の株式データを分析して、必ずJSON形式のみで返してください。前置きや説明文は不要です。
+
+銘柄名: {name}
+現在株価: {current_price}
+MA5: {ma5} / MA25: {ma25}
+RSI(14): {rsi}
+MACD: {macd}
+52週高値: {high52} / 52週安値: {low52}
+PER: {per} / PBR: {pbr}
+時価総額: {market_cap}
+配当利回り: {dividend_yield}
+ROE: {roe}
+売上成長率: {revenue_growth}
+
+最近のニュース:
+{news_text}
+
+以下のJSON形式で回答してください：
+{{
+  "overall_score": 1〜100の整数（総合投資スコア）,
+  "overall_judgment": "buy" か "sell" か "hold" か "watch" のいずれか,
+  "overall_reason": "総合判断の理由を2〜3文で（日本語）",
+  "news_summary": "ニュース全体の要約を2〜3文で（日本語）",
+  "news_sentiment": "positive" か "negative" か "neutral" のいずれか,
+  "news_sentiment_reason": "ニュースのセンチメント判断理由（日本語）",
+  "risks": ["リスク1（日本語）", "リスク2（日本語）"],
+  "opportunities": ["機会1（日本語）", "機会2（日本語）"]
+}}
+"""
+
+        model = genai.GenerativeModel("gemini-2.5-flash")
+        response = model.generate_content(
+            [{"role": "user", "parts": [{"text": prompt}]}]
+        )
+        raw = response.text.strip()
+        raw = raw.replace("```json", "").replace("```", "").strip()
+        analysis = json.loads(raw)
+
+        return {
+            "code": code,
+            "name": name,
+            "price": current_price,
+            "ma5": ma5,
+            "ma25": ma25,
+            "rsi": rsi,
+            "macd": macd,
+            "high52": high52,
+            "low52": low52,
+            "per": per,
+            "pbr": pbr,
+            "market_cap": market_cap,
+            "dividend_yield": dividend_yield,
+            "roe": roe,
+            "revenue_growth": revenue_growth,
+            "news": news_items,
+            "analysis": analysis,
+        }
+
+    except Exception as e:
+        print(f"AI分析エラー: {e}")
         return {"error": str(e)}

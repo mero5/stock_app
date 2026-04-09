@@ -135,4 +135,11 @@ class StockService {
       isPositive: isPositive,
     );
   }
+
+  static Future<Map<String, dynamic>> getAiAnalysis(String code) async {
+    final res = await http.get(
+      Uri.parse("${Constants.backendUrl}/stock/ai_analysis?code=$code"),
+    );
+    return jsonDecode(res.body) as Map<String, dynamic>;
+  }
 }
