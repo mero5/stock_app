@@ -2,8 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import '../config/constants.dart';
-import '../services/auth_service.dart'; //  追加
-import '../services/channel_service.dart'; //  追加
+import '../services/auth_service.dart';
+import '../services/channel_service.dart';
+import 'youtube_detail_screen.dart';
 
 class YoutubeScreen extends StatefulWidget {
   const YoutubeScreen({super.key});
@@ -152,14 +153,22 @@ class _YoutubeScreenState extends State<YoutubeScreen>
           "channel_name": channel["name"],
           "title": "動画が見つかりません",
           "summary": "動画が取得できませんでした",
-          "video_id": "",
           "url": "",
+          "nikkei_outlook": "not_mentioned",
+          "nikkei_reason": "",
+          "us_market_outlook": "not_mentioned",
+          "sentiment": "neutral",
+          "topics": [],
+          "recommended_action": "not_mentioned",
+          "key_stocks": [],
+          "confidence": 0,
         };
       }
 
       final videoId = videoData["video_id"] ?? "";
       final title = videoData["title"] ?? "";
       final description = videoData["description"] ?? "";
+      final publishedAt = videoData["published_at"] ?? "";
       final videoUrl = "https://www.youtube.com/watch?v=$videoId";
 
       final summaryRes = await http.post(
@@ -173,20 +182,28 @@ class _YoutubeScreenState extends State<YoutubeScreen>
       );
       final summaryData = jsonDecode(summaryRes.body);
 
+      // バックエンドから返ってきたJSONをそのまま使い、channel_nameとtitleを追加
       return {
         "channel_name": channel["name"],
         "title": title,
-        "summary": summaryData["summary"] ?? "要約できませんでした",
-        "video_id": videoId,
         "url": videoUrl,
+        "published_at": publishedAt,
+        ...summaryData, // summary, nikkei_outlook, sentiment など全フィールド
       };
     } catch (e) {
       return {
         "channel_name": channel["name"],
         "title": "エラー",
         "summary": "取得に失敗しました: $e",
-        "video_id": "",
         "url": "",
+        "nikkei_outlook": "not_mentioned",
+        "nikkei_reason": "",
+        "us_market_outlook": "not_mentioned",
+        "sentiment": "neutral",
+        "topics": [],
+        "recommended_action": "not_mentioned",
+        "key_stocks": [],
+        "confidence": 0,
       };
     }
   }
@@ -352,7 +369,7 @@ class _YoutubeScreenState extends State<YoutubeScreen>
     );
   }
 
-  // ③ 要約タブ（変更なし）
+  // ③ 要約タブ
   Widget _buildSummaryTab() {
     return Padding(
       padding: const EdgeInsets.all(16),
@@ -372,7 +389,7 @@ class _YoutubeScreenState extends State<YoutubeScreen>
               children: [
                 LinearProgressIndicator(),
                 SizedBox(height: 8),
-                Text("字幕を取得・要約中です...", style: TextStyle(color: Colors.grey)),
+                Text("要約中です...", style: TextStyle(color: Colors.grey)),
               ],
             ),
           Expanded(
@@ -386,58 +403,299 @@ class _YoutubeScreenState extends State<YoutubeScreen>
                 : ListView.builder(
                     itemCount: summaries.length,
                     itemBuilder: (context, index) {
-                      final s = summaries[index];
-                      return Card(
-                        margin: const EdgeInsets.only(bottom: 12),
-                        child: Padding(
-                          padding: const EdgeInsets.all(12),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                s["channel_name"] ?? "",
-                                style: const TextStyle(
-                                  color: Colors.red,
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 12,
-                                ),
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                s["title"] ?? "",
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 14,
-                                ),
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                              const SizedBox(height: 8),
-                              Text(
-                                s["summary"] ?? "",
-                                style: const TextStyle(fontSize: 13),
-                              ),
-                              const SizedBox(height: 8),
-                              if (s["url"] != null && s["url"]!.isNotEmpty)
-                                TextButton.icon(
-                                  onPressed: () {},
-                                  icon: const Icon(
-                                    Icons.play_circle,
-                                    color: Colors.red,
-                                  ),
-                                  label: const Text(
-                                    "YouTubeで見る",
-                                    style: TextStyle(color: Colors.red),
-                                  ),
-                                ),
-                            ],
-                          ),
-                        ),
-                      );
+                      return _buildAnalysisCard(summaries[index]);
                     },
                   ),
           ),
         ],
+      ),
+    );
+  }
+
+  // ③ 要約タブ（変更なし）
+  // 分析カードウィジェット
+  Widget _buildAnalysisCard(Map<String, dynamic> s) {
+    return Card(
+      margin: const EdgeInsets.only(bottom: 10),
+      elevation: 2,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(10),
+        onTap: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => YoutubeDetailScreen(summary: s)),
+          );
+        },
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // チャンネル名
+                    Text(
+                      s["channel_name"] ?? "",
+                      style: const TextStyle(
+                        color: Colors.red,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 11,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    // 動画タイトル（2行まで）
+                    Text(
+                      s["title"] ?? "",
+                      style: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 4),
+                    // 投稿日時
+                    if ((s["published_at"] ?? "").isNotEmpty)
+                      Text(
+                        _formatDate(s["published_at"]),
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: Colors.grey,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 10),
+              // センチメントバッジ + 矢印
+              Column(
+                children: [
+                  _sentimentBadge(s["sentiment"] ?? "neutral"),
+                  const SizedBox(height: 4),
+                  const Icon(Icons.chevron_right, color: Colors.grey),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // 日付フォーマット
+  String _formatDate(String iso) {
+    try {
+      final dt = DateTime.parse(iso).toLocal();
+      return "${dt.year}/${dt.month.toString().padLeft(2, '0')}/${dt.day.toString().padLeft(2, '0')} "
+          "${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}";
+    } catch (_) {
+      return iso;
+    }
+  }
+
+  // センチメントバッジ
+  Widget _sentimentBadge(String sentiment) {
+    final map = {
+      "very_bullish": ("超強気", Colors.green.shade700),
+      "bullish": ("強気", Colors.green),
+      "neutral": ("中立", Colors.grey),
+      "bearish": ("弱気", Colors.orange),
+      "very_bearish": ("超弱気", Colors.red),
+    };
+    final (label, color) = map[sentiment] ?? ("不明", Colors.grey);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.15),
+        border: Border.all(color: color),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: color,
+          fontSize: 11,
+          fontWeight: FontWeight.bold,
+        ),
+      ),
+    );
+  }
+
+  // 見通し行（日経・米国）
+  Widget _outlookRow({
+    required IconData icon,
+    required String label,
+    required String outlook,
+    required String reason,
+  }) {
+    final map = {
+      "bullish": ("↑ 上昇", Colors.green),
+      "bearish": ("↓ 下落", Colors.red),
+      "neutral": ("→ 横ばい", Colors.orange),
+      "not_mentioned": null,
+    };
+    final entry = map[outlook];
+
+    return Row(
+      children: [
+        Icon(icon, size: 16, color: Colors.grey),
+        const SizedBox(width: 6),
+        SizedBox(
+          width: 70,
+          child: Text(
+            label,
+            style: const TextStyle(fontSize: 12, color: Colors.black54),
+          ),
+        ),
+        if (entry == null) ...[
+          Expanded(
+            child: Container(
+              height: 6,
+              decoration: BoxDecoration(
+                color: Colors.grey.shade200,
+                borderRadius: BorderRadius.circular(3),
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          const Text(
+            "言及なし",
+            style: TextStyle(fontSize: 11, color: Colors.grey),
+          ),
+        ] else ...[
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+            decoration: BoxDecoration(
+              color: entry.$2.withOpacity(0.12),
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: Text(
+              entry.$1,
+              style: TextStyle(
+                color: entry.$2,
+                fontSize: 12,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+          if (reason.isNotEmpty) ...[
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                reason,
+                style: const TextStyle(fontSize: 11, color: Colors.black54),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ],
+      ],
+    );
+  }
+
+  // 推奨アクション行
+  Widget _actionRow(String action) {
+    final map = {
+      "buy": ("買い推奨", Colors.green, Icons.arrow_upward),
+      "sell": ("売り推奨", Colors.red, Icons.arrow_downward),
+      "hold": ("保有継続", Colors.blue, Icons.pause),
+      "watch": ("要注目", Colors.orange, Icons.visibility),
+      "not_mentioned": null,
+    };
+    final entry = map[action];
+
+    return Row(
+      children: [
+        const Icon(Icons.recommend, size: 16, color: Colors.grey),
+        const SizedBox(width: 6),
+        const SizedBox(
+          width: 70,
+          child: Text(
+            "推奨アクション",
+            style: TextStyle(fontSize: 12, color: Colors.black54),
+          ),
+        ),
+        if (entry == null) ...[
+          Expanded(
+            child: Container(
+              height: 6,
+              decoration: BoxDecoration(
+                color: Colors.grey.shade200,
+                borderRadius: BorderRadius.circular(3),
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          const Text(
+            "言及なし",
+            style: TextStyle(fontSize: 11, color: Colors.grey),
+          ),
+        ] else
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+            decoration: BoxDecoration(
+              color: entry.$2.withOpacity(0.12),
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(entry.$3, size: 12, color: entry.$2),
+                const SizedBox(width: 4),
+                Text(
+                  entry.$1,
+                  style: TextStyle(
+                    color: entry.$2,
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+
+  // 信頼度バー
+  Widget _confidenceBar(dynamic confidence) {
+    final int level = (confidence is int)
+        ? confidence
+        : int.tryParse(confidence.toString()) ?? 0;
+    return Row(
+      children: [
+        const Icon(Icons.bar_chart, size: 16, color: Colors.grey),
+        const SizedBox(width: 6),
+        const SizedBox(
+          width: 70,
+          child: Text(
+            "信頼度",
+            style: TextStyle(fontSize: 12, color: Colors.black54),
+          ),
+        ),
+        ...List.generate(
+          5,
+          (i) => Icon(
+            i < level ? Icons.circle : Icons.circle_outlined,
+            size: 14,
+            color: i < level ? Colors.blue : Colors.grey.shade300,
+          ),
+        ),
+      ],
+    );
+  }
+
+  // セクションラベル
+  Widget _sectionLabel(String text) {
+    return Text(
+      text,
+      style: const TextStyle(
+        fontSize: 11,
+        color: Colors.black45,
+        fontWeight: FontWeight.bold,
       ),
     );
   }

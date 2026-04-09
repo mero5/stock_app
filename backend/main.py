@@ -2,7 +2,7 @@
 # 株アプリ バックエンドAPI (FastAPI)
 # ===================================================
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 import yfinance as yf
 import requests
@@ -350,37 +350,56 @@ def search_channels(q: str):
 # YouTubeチャンネル最新動画要約API
 # ===================================================
 @app.post("/summarize")
-def summarize(data: dict):
-    """
-    YouTubeのURLをGeminiに渡して動画内容を直接要約
-    GeminiはYouTubeのURLを直接理解できるので字幕取得不要
-    """
+async def summarize_video(request: Request):
+    body = await request.json()
+    title = body.get("title", "")
+    url = body.get("url", "")
+    transcript = body.get("transcript", "")
+
+    prompt = f"""
+以下のYouTube動画を分析して、必ずJSON形式のみで返してください。前置きや説明文は不要です。
+
+動画タイトル: {title}
+動画URL: {url}
+動画説明文: {transcript}
+
+以下のJSON形式で回答してください：
+{{
+"summary": "動画の内容を2〜3文で要約",
+"nikkei_outlook": "bullish" か "bearish" か "neutral" か "not_mentioned" のいずれか,
+"nikkei_reason": "日経平均についての根拠（not_mentionedの場合は空文字）",
+"us_market_outlook": "bullish" か "bearish" か "neutral" か "not_mentioned" のいずれか,
+"sentiment": "very_bullish" か "bullish" か "neutral" か "bearish" か "very_bearish" のいずれか,
+"topics": ["話題1", "話題2", "話題3"],
+"recommended_action": "buy" か "sell" か "hold" か "watch" か "not_mentioned" のいずれか,
+"key_stocks": ["言及された銘柄名1", "銘柄名2"],
+"confidence": 1から5の整数
+}}
+"""
+
     try:
-        title = data.get("title", "")
-        url = data.get("url", "")
-        transcript = data.get("transcript", "")
-
-        # URLがある場合はGeminiにYouTubeURLを直接渡す
-        if url:
-            response = gemini_model.generate_content([
-                f"以下のYouTube動画「{title}」を見て、株式投資に役立つ情報を日本語で箇条書き5つ以内で要約してください。\n{url}"
-            ])
-            return {"summary": response.text}
-
-        # URLがない場合は説明文や字幕テキストで要約
-        if transcript:
-            if len(transcript) > 8000:
-                transcript = transcript[:8000]
-            response = gemini_model.generate_content(
-                f"以下の動画「{title}」の内容を株式投資に役立つ情報として日本語で箇条書き5つ以内で要約してください。\n\n{transcript}"
-            )
-            return {"summary": response.text}
-
-        return {"error": "URLまたはテキストが必要です"}
-
+        model = genai.GenerativeModel("gemini-2.5-flash")
+        response = model.generate_content(
+            [{"role": "user", "parts": [{"text": prompt}]}]
+        )
+        raw = response.text.strip()
+        raw = raw.replace("```json", "").replace("```", "").strip()
+        import json
+        parsed = json.loads(raw)
+        return parsed
     except Exception as e:
-        print(f"要約エラー: {e}")
-        return {"error": str(e)}
+        return {
+            "summary": "要約できませんでした",
+            "nikkei_outlook": "not_mentioned",
+            "nikkei_reason": "",
+            "us_market_outlook": "not_mentioned",
+            "sentiment": "neutral",
+            "topics": [],
+            "recommended_action": "not_mentioned",
+            "key_stocks": [],
+            "confidence": 0,
+            "error": str(e)
+        }
 
 
 # ===================================================
@@ -426,6 +445,7 @@ def get_latest_video(channel_id: str):
             "video_id": video["id"]["videoId"],
             "title": video["snippet"]["title"],
             "published_at": video["snippet"]["publishedAt"],
+            "description": video["snippet"]["description"],
             "thumbnail": video["snippet"]["thumbnails"]["default"]["url"],
             "url": f"https://www.youtube.com/watch?v={video['id']['videoId']}",
         }
