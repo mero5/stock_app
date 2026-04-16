@@ -180,7 +180,7 @@ class _HomeScreenState extends State<HomeScreen> {
             },
           ),
           const YoutubeScreen(),
-          const ScheduleScreen(),
+          const ScheduleScreen(), // ← 追加
           Center(
             child: ElevatedButton(
               onPressed: () async {
@@ -191,13 +191,13 @@ class _HomeScreenState extends State<HomeScreen> {
                   (route) => false,
                 );
               },
-              child: const Text("ログアウト"),
+              child: const Text('ログアウト'),
             ),
           ),
         ],
       ),
       bottomNavigationBar: BottomNavigationBar(
-        type: BottomNavigationBarType.fixed,
+        type: BottomNavigationBarType.fixed, // ← 追加（5個以上必須）
         currentIndex: _currentIndex,
         onTap: (index) async {
           if (index == 0) await loadFavorites();
@@ -208,17 +208,17 @@ class _HomeScreenState extends State<HomeScreen> {
           });
         },
         items: const [
-          BottomNavigationBarItem(icon: Icon(Icons.home), label: "ホーム"),
-          BottomNavigationBarItem(icon: Icon(Icons.add), label: "追加"),
+          BottomNavigationBarItem(icon: Icon(Icons.home), label: 'ホーム'),
+          BottomNavigationBarItem(icon: Icon(Icons.add), label: '追加'),
           BottomNavigationBarItem(
             icon: Icon(Icons.play_circle),
-            label: "YouTube",
+            label: 'YouTube',
           ),
           BottomNavigationBarItem(
             icon: Icon(Icons.calendar_month),
-            label: "スケジュール",
-          ),
-          BottomNavigationBarItem(icon: Icon(Icons.logout), label: "ログアウト"),
+            label: 'スケジュール',
+          ), // ← 追加
+          BottomNavigationBarItem(icon: Icon(Icons.logout), label: 'ログアウト'),
         ],
       ),
     );

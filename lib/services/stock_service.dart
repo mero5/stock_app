@@ -160,4 +160,22 @@ class StockService {
       return [];
     }
   }
+
+  static Future<List<Map<String, dynamic>>> getMarketEvents(
+    int year,
+    int month,
+  ) async {
+    try {
+      final res = await http.get(
+        Uri.parse(
+          "${Constants.backendUrl}/market/events?year=$year&month=$month",
+        ),
+      );
+      final List data = jsonDecode(res.body);
+      return List<Map<String, dynamic>>.from(data);
+    } catch (e) {
+      print('マーケットイベント取得エラー: $e');
+      return [];
+    }
+  }
 }

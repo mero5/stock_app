@@ -448,17 +448,7 @@ async def summarize_video(request: Request):
 
 @app.get("/summaries")
 def get_summaries(channel_ids: str):
-    """
-    複数チャンネルの最新動画要約を一括取得
-    channel_ids: カンマ区切りのチャンネルID
-    例: /summaries?channel_ids=UCxxx,UCyyy,UCzzz
-    """
-    ids = channel_ids.split(",")
-    results = []
-    for channel_id in ids:
-        summary = get_channel_summary(channel_id.strip())
-        results.append(summary)
-    return results
+    return []
 
 
 
@@ -503,7 +493,9 @@ def get_stock_events(codes: str):
     ウォッチリスト銘柄のイベント（決算・配当）を取得
     codes: カンマ区切りの銘柄コード
     """
+    import datetime
     result = []
+
     for code in codes.split(","):
         code = code.strip()
         if not code:
@@ -518,58 +510,63 @@ def get_stock_events(codes: str):
             info = ticker.info
             name = info.get("longName") or info.get("shortName") or code
 
-            # 決算発表日
-            earnings_date = None
-            try:
-                cal = ticker.calendar
-                if cal is not None and not cal.empty:
-                    ed = cal.get("Earnings Date")
-                    if ed is not None and len(ed) > 0:
-                        earnings_date = str(ed.iloc[0].date()) if hasattr(ed.iloc[0], 'date') else str(ed.iloc[0])
-            except Exception:
-                pass
+            # 決算発表日（日本株はJ-Quantsから取得）
+            if code.isdigit():
+                try:
+                    res = requests.get(
+                        "https://api.jquants.com/v2/fins/announcement",
+                        headers={"x-api-key": JQUANTS_API_KEY},
+                        params={"code": (code[:-1] if len(code) == 5 else code) + "0"}
+                    )
+                    data = res.json()
+                    announcements = data.get("announcement", [])
+                    for ann in announcements[:2]:
+                        date_str = ann.get("AnnouncementDate", "")
+                        if date_str:
+                            result.append({
+                                "code": code,
+                                "name": name,
+                                "date": date_str[:10],
+                                "type": "earnings",
+                                "label": f"{name} 決算発表",
+                                "color": "red",
+                            })
+                except Exception as e:
+                    print(f"J-Quants決算取得エラー: {e}")
+            else:
+                # 米国株はyfinanceから
+                try:
+                    cal = ticker.calendar
+                    if cal is not None and not cal.empty:
+                        ed = cal.get("Earnings Date")
+                        if ed is not None and len(ed) > 0:
+                            earnings_date = str(ed.iloc[0].date()) if hasattr(ed.iloc[0], 'date') else str(ed.iloc[0])
+                            result.append({
+                                "code": code,
+                                "name": name,
+                                "date": earnings_date,
+                                "type": "earnings",
+                                "label": f"{name} 決算発表",
+                                "color": "red",
+                            })
+                except Exception:
+                    pass
 
-            # 配当関連
-            ex_dividend = None
-            dividend_date = None
+            # 配当関連（yfinance）
             try:
                 ex_div = info.get("exDividendDate")
                 if ex_div:
-                    import datetime
                     ex_dividend = str(datetime.datetime.fromtimestamp(ex_div).date())
-                div_date = info.get("lastDividendDate") or info.get("nextDividendDate")
-                if div_date:
-                    dividend_date = str(datetime.datetime.fromtimestamp(div_date).date())
+                    result.append({
+                        "code": code,
+                        "name": name,
+                        "date": ex_dividend,
+                        "type": "ex_dividend",
+                        "label": f"{name} 配当落ち日",
+                        "color": "blue",
+                    })
             except Exception:
                 pass
-
-            if earnings_date:
-                result.append({
-                    "code": code,
-                    "name": name,
-                    "date": earnings_date,
-                    "type": "earnings",
-                    "label": f"{name} 決算発表",
-                    "color": "red",
-                })
-            if ex_dividend:
-                result.append({
-                    "code": code,
-                    "name": name,
-                    "date": ex_dividend,
-                    "type": "ex_dividend",
-                    "label": f"{name} 配当落ち日",
-                    "color": "blue",
-                })
-            if dividend_date and dividend_date != ex_dividend:
-                result.append({
-                    "code": code,
-                    "name": name,
-                    "date": dividend_date,
-                    "type": "dividend",
-                    "label": f"{name} 配当支払日",
-                    "color": "green",
-                })
 
         except Exception as e:
             print(f"イベント取得エラー {code}: {e}")
@@ -785,118 +782,180 @@ ROE: {roe}
         print(f"AI分析エラー: {e}")
         return {"error": str(e)}
 
-        # ── テクニカル計算 ──
-        closes = hist["Close"].tolist() if not hist.empty else []
-        highs  = hist["High"].tolist()  if not hist.empty else []
-        lows   = hist["Low"].tolist()   if not hist.empty else []
 
-        current_price = closes[-1] if closes else None
-        ma5  = round(sum(closes[-5:])  / min(len(closes), 5),  2) if closes else None
-        ma25 = round(sum(closes[-25:]) / min(len(closes), 25), 2) if closes else None
+# ===================================================
+# マーケットイベント取得API
+# ===================================================
 
-        def ema(data, period):
-            if len(data) < period:
-                return None
-            k = 2 / (period + 1)
-            val = sum(data[:period]) / period
-            for v in data[period:]:
-                val = v * k + val * (1 - k)
-            return round(val, 2)
+@app.get("/market/events")
+def get_market_events(year: int, month: int):
+    """
+    指定年月のマーケットイベントを取得
+    - 日本の祝日（jpholiday）
+    - 米国市場休場日（exchange-calendars）
+    - 満月・新月（ephem）
+    - SQ・メジャーSQ（計算）
+    - 権利落ち日（計算）
+    - FOMC・日銀（固定データ）
+    - 米雇用統計（毎月第1金曜）
+    """
+    import datetime
+    import ephem
+    import jpholiday
+    import exchange_calendars as xcals
 
-        ema12 = ema(closes, 12)
-        ema26 = ema(closes, 26)
-        macd  = round(ema12 - ema26, 2) if ema12 and ema26 else None
+    results = []
 
-        rsi = None
-        if len(closes) >= 15:
-            period = 14
-            gains, losses = [], []
-            for i in range(1, period + 1):
-                diff = closes[-period - 1 + i] - closes[-period - 2 + i]
-                gains.append(max(diff, 0))
-                losses.append(max(-diff, 0))
-            avg_gain = sum(gains) / period
-            avg_loss = sum(losses) / period
-            if avg_loss != 0:
-                rsi = round(100 - (100 / (1 + avg_gain / avg_loss)), 1)
-            else:
-                rsi = 100.0
+    # ── 日本の祝日（jpholiday） ──
+    first = datetime.date(year, month, 1)
+    last_day = (datetime.date(year, month + 1, 1) - datetime.timedelta(days=1)) if month < 12 else datetime.date(year, 12, 31)
+    d = first
+    while d <= last_day:
+        if jpholiday.is_holiday(d):
+            name = jpholiday.is_holiday_name(d)
+            results.append({
+                "date": str(d),
+                "label": f"🇯🇵 {name}",
+                "type": "holiday_jp",
+                "color": "pink",
+            })
+        d += datetime.timedelta(days=1)
 
-        high52 = round(max(highs), 2) if highs else None
-        low52  = round(min(lows),  2) if lows  else None
-
-        per            = clean_value(info.get("trailingPE"))
-        pbr            = clean_value(info.get("priceToBook"))
-        market_cap     = clean_value(info.get("marketCap"))
-        dividend_yield = clean_value(info.get("dividendYield"))
-        roe            = clean_value(info.get("returnOnEquity"))
-        revenue_growth = clean_value(info.get("revenueGrowth"))
-        name           = info.get("longName") or info.get("shortName") or code
-
-        news_text = "\n".join([
-            f"・{n['title']}（{n['provider']}）"
-            for n in news_items if n['title']
-        ]) or "ニュースなし"
-
-        prompt = f"""
-以下の株式データを分析して、必ずJSON形式のみで返してください。前置きや説明文は不要です。
-
-銘柄名: {name}
-現在株価: {current_price}
-MA5: {ma5} / MA25: {ma25}
-RSI(14): {rsi}
-MACD: {macd}
-52週高値: {high52} / 52週安値: {low52}
-PER: {per} / PBR: {pbr}
-時価総額: {market_cap}
-配当利回り: {dividend_yield}
-ROE: {roe}
-売上成長率: {revenue_growth}
-
-最近のニュース:
-{news_text}
-
-以下のJSON形式で回答してください：
-{{
-  "overall_score": 1〜100の整数（総合投資スコア）,
-  "overall_judgment": "buy" か "sell" か "hold" か "watch" のいずれか,
-  "overall_reason": "総合判断の理由を2〜3文で（日本語）",
-  "news_summary": "ニュース全体の要約を2〜3文で（日本語）",
-  "news_sentiment": "positive" か "negative" か "neutral" のいずれか,
-  "news_sentiment_reason": "ニュースのセンチメント判断理由（日本語）",
-  "risks": ["リスク1（日本語）", "リスク2（日本語）"],
-  "opportunities": ["機会1（日本語）", "機会2（日本語）"]
-}}
-"""
-
-        model = genai.GenerativeModel("gemini-2.5-flash")
-        response = model.generate_content(
-            [{"role": "user", "parts": [{"text": prompt}]}]
-        )
-        raw = response.text.strip()
-        raw = raw.replace("```json", "").replace("```", "").strip()
-        analysis = json.loads(raw)
-
-        return {
-            "code": code,
-            "name": name,
-            "price": current_price,
-            "ma5": ma5,
-            "ma25": ma25,
-            "rsi": rsi,
-            "macd": macd,
-            "high52": high52,
-            "low52": low52,
-            "per": per,
-            "pbr": pbr,
-            "market_cap": market_cap,
-            "dividend_yield": dividend_yield,
-            "roe": roe,
-            "revenue_growth": revenue_growth,
-            "news": news_items,
-            "analysis": analysis,
-        }
-
+    # ── 米国市場休場日（exchange-calendars） ──
+    try:
+        xnys = xcals.get_calendar("XNYS")
+        month_start = f"{year}-{str(month).zfill(2)}-01"
+        month_end = str(last_day)
+        sessions = xnys.sessions_in_range(month_start, month_end)
+        all_weekdays = []
+        d = first
+        while d <= last_day:
+            if d.weekday() < 5:  # 月〜金
+                all_weekdays.append(str(d))
+            d += datetime.timedelta(days=1)
+        session_strs = [str(s.date()) for s in sessions]
+        for wd in all_weekdays:
+            if wd not in session_strs:
+                results.append({
+                    "date": wd,
+                    "label": "🇺🇸 米国市場休場",
+                    "type": "holiday_us",
+                    "color": "blueGrey",
+                })
     except Exception as e:
-        print(f"AI分析エラー: {e}")
-        return {"error": str(e)}
+        print(f"米国休場日取得エラー: {e}")
+
+    # ── 満月・新月（ephem） ──
+    try:
+        d = first
+        while d <= last_day:
+            dt = datetime.datetime(d.year, d.month, d.day)
+            # 新月チェック
+            prev_new = ephem.previous_new_moon(dt)
+            next_new = ephem.next_new_moon(dt)
+            prev_new_date = ephem.Date(prev_new).datetime().date()
+            next_new_date = ephem.Date(next_new).datetime().date()
+            if prev_new_date == d or next_new_date == d:
+                results.append({
+                    "date": str(d),
+                    "label": "🌑 新月",
+                    "type": "new_moon",
+                    "color": "grey",
+                })
+            # 満月チェック
+            prev_full = ephem.previous_full_moon(dt)
+            next_full = ephem.next_full_moon(dt)
+            prev_full_date = ephem.Date(prev_full).datetime().date()
+            next_full_date = ephem.Date(next_full).datetime().date()
+            if prev_full_date == d or next_full_date == d:
+                results.append({
+                    "date": str(d),
+                    "label": "🌕 満月",
+                    "type": "full_moon",
+                    "color": "amber",
+                })
+            d += datetime.timedelta(days=1)
+    except Exception as e:
+        print(f"月齢取得エラー: {e}")
+
+    # ── SQ・メジャーSQ（第2金曜） ──
+    fri_count = 0
+    d = first
+    while d <= last_day:
+        if d.weekday() == 4:  # 金曜
+            fri_count += 1
+            if fri_count == 2:
+                is_major = month in [3, 6, 9, 12]
+                results.append({
+                    "date": str(d),
+                    "label": "メジャーSQ" if is_major else "SQ",
+                    "type": "major_sq" if is_major else "sq",
+                    "color": "deepOrange" if is_major else "orange",
+                })
+                break
+        d += datetime.timedelta(days=1)
+
+    # ── 米雇用統計（第1金曜） ──
+    d = first
+    while d <= last_day:
+        if d.weekday() == 4:  # 金曜
+            results.append({
+                "date": str(d),
+                "label": "🇺🇸 米雇用統計",
+                "type": "jobs",
+                "color": "teal",
+            })
+            break
+        d += datetime.timedelta(days=1)
+
+    # ── 権利落ち日（月末から2営業日前） ──
+    biz_count = 0
+    d = last_day
+    while biz_count < 2:
+        if d.weekday() < 5:
+            biz_count += 1
+            if biz_count < 2:
+                d -= datetime.timedelta(days=1)
+        else:
+            d -= datetime.timedelta(days=1)
+    results.append({
+        "date": str(d),
+        "label": "権利落ち日（目安）",
+        "type": "rights",
+        "color": "indigo",
+    })
+
+    # ── FOMC（固定データ・年1回更新） ──
+    fomc = {
+        "2025-01-29", "2025-03-19", "2025-05-07", "2025-06-18",
+        "2025-07-30", "2025-09-17", "2025-10-29", "2025-12-10",
+        "2026-01-28", "2026-03-18", "2026-04-29", "2026-06-17",
+        "2026-07-29", "2026-09-16", "2026-10-28", "2026-12-09",
+    }
+    prefix = f"{year}-{str(month).zfill(2)}"
+    for date_str in fomc:
+        if date_str.startswith(prefix):
+            results.append({
+                "date": date_str,
+                "label": "FOMC 結果発表",
+                "type": "fomc",
+                "color": "purple",
+            })
+
+    # ── 日銀金融政策決定会合（固定データ・年1回更新） ──
+    boj = {
+        "2025-01-24", "2025-03-19", "2025-05-01", "2025-06-17",
+        "2025-07-31", "2025-09-19", "2025-10-29", "2025-12-19",
+        "2026-01-23", "2026-03-19", "2026-04-28", "2026-06-16",
+        "2026-07-30", "2026-09-17", "2026-10-28", "2026-12-18",
+    }
+    for date_str in boj:
+        if date_str.startswith(prefix):
+            results.append({
+                "date": date_str,
+                "label": "日銀 政策金利発表",
+                "type": "boj",
+                "color": "brown",
+            })
+
+    return results

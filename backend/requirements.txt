@@ -2,3 +2,6 @@ fastapi
 uvicorn[standard]
 yfinance
 requests
+ephem
+jpholiday
+exchange-calendars

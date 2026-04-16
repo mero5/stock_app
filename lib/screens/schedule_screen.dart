@@ -12,347 +12,39 @@ class ScheduleScreen extends StatefulWidget {
 class _ScheduleScreenState extends State<ScheduleScreen> {
   DateTime _focusedMonth = DateTime.now();
   List<Map<String, dynamic>> _stockEvents = [];
+  List<Map<String, dynamic>> _marketEvents = [];
   bool _isLoading = false;
 
   @override
   void initState() {
     super.initState();
-    _loadStockEvents();
+    _loadAllEvents();
   }
 
-  Future<void> _loadStockEvents() async {
+  Future<void> _loadAllEvents() async {
     setState(() => _isLoading = true);
     try {
+      final year = _focusedMonth.year;
+      final month = _focusedMonth.month;
       final codes = await WatchlistService.getCodes();
-      if (codes.isNotEmpty) {
-        final events = await StockService.getStockEvents(codes);
-        setState(() => _stockEvents = events);
-      }
+
+      final futures = <Future>[
+        StockService.getMarketEvents(year, month),
+        if (codes.isNotEmpty) StockService.getStockEvents(codes),
+      ];
+      final results = await Future.wait(futures);
+
+      setState(() {
+        _marketEvents = results[0] as List<Map<String, dynamic>>;
+        _stockEvents = codes.isNotEmpty
+            ? results[1] as List<Map<String, dynamic>>
+            : [];
+      });
     } catch (e) {
       print('スケジュール取得エラー: $e');
     } finally {
       setState(() => _isLoading = false);
     }
-  }
-
-  // ── マーケットイベント（固定データ）──
-  List<Map<String, dynamic>> _getMarketEvents(int year, int month) {
-    final events = <Map<String, dynamic>>[];
-
-    // 日本の祝日2025-2026
-    final holidays = {
-      '2025-01-01': '元日',
-      '2025-01-13': '成人の日',
-      '2025-02-11': '建国記念の日',
-      '2025-02-23': '天皇誕生日',
-      '2025-03-20': '春分の日',
-      '2025-04-29': '昭和の日',
-      '2025-05-03': '憲法記念日',
-      '2025-05-04': 'みどりの日',
-      '2025-05-05': 'こどもの日',
-      '2025-07-21': '海の日',
-      '2025-08-11': '山の日',
-      '2025-09-15': '敬老の日',
-      '2025-09-23': '秋分の日',
-      '2025-10-13': 'スポーツの日',
-      '2025-11-03': '文化の日',
-      '2025-11-23': '勤労感謝の日',
-      '2026-01-01': '元日',
-      '2026-01-12': '成人の日',
-      '2026-02-11': '建国記念の日',
-      '2026-02-23': '天皇誕生日',
-      '2026-03-20': '春分の日',
-      '2026-04-29': '昭和の日',
-      '2026-05-03': '憲法記念日',
-      '2026-05-04': 'みどりの日',
-      '2026-05-05': 'こどもの日',
-      '2026-07-20': '海の日',
-      '2026-08-11': '山の日',
-      '2026-09-21': '敬老の日',
-      '2026-09-23': '秋分の日',
-      '2026-10-12': 'スポーツの日',
-      '2026-11-03': '文化の日',
-      '2026-11-23': '勤労感謝の日',
-    };
-
-    // 米国市場休場日2025-2026
-    final usHolidays = {
-      '2025-01-01': '米市場休場(元日)',
-      '2025-01-20': '米市場休場(MLKの日)',
-      '2025-02-17': '米市場休場(大統領の日)',
-      '2025-04-18': '米市場休場(聖金曜日)',
-      '2025-05-26': '米市場休場(メモリアルデー)',
-      '2025-06-19': '米市場休場(奴隷解放記念日)',
-      '2025-07-04': '米市場休場(独立記念日)',
-      '2025-09-01': '米市場休場(労働者の日)',
-      '2025-11-27': '米市場休場(感謝祭)',
-      '2025-12-25': '米市場休場(クリスマス)',
-      '2026-01-01': '米市場休場(元日)',
-      '2026-01-19': '米市場休場(MLKの日)',
-      '2026-02-16': '米市場休場(大統領の日)',
-      '2026-04-03': '米市場休場(聖金曜日)',
-      '2026-05-25': '米市場休場(メモリアルデー)',
-      '2026-06-19': '米市場休場(奴隷解放記念日)',
-      '2026-07-03': '米市場休場(独立記念日)',
-      '2026-09-07': '米市場休場(労働者の日)',
-      '2026-11-26': '米市場休場(感謝祭)',
-      '2026-12-25': '米市場休場(クリスマス)',
-    };
-
-    // SQ・メジャーSQ（毎月第2金曜・3月6月9月12月がメジャー）
-    final sqDates = _getSqDates(year, month);
-    for (final d in sqDates) {
-      final isMajor = [3, 6, 9, 12].contains(d.month);
-      events.add({
-        'date': _fmt(d),
-        'label': isMajor ? 'メジャーSQ' : 'SQ',
-        'type': isMajor ? 'major_sq' : 'sq',
-        'color': isMajor ? 'deepOrange' : 'orange',
-      });
-    }
-
-    // 日銀金融政策決定会合 2025-2026
-    final bojDates = {
-      '2025-01-23',
-      '2025-01-24',
-      '2025-03-18',
-      '2025-03-19',
-      '2025-04-30',
-      '2025-05-01',
-      '2025-06-16',
-      '2025-06-17',
-      '2025-07-30',
-      '2025-07-31',
-      '2025-09-18',
-      '2025-09-19',
-      '2025-10-28',
-      '2025-10-29',
-      '2025-12-18',
-      '2025-12-19',
-      '2026-01-22',
-      '2026-01-23',
-      '2026-03-18',
-      '2026-03-19',
-      '2026-04-27',
-      '2026-04-28',
-      '2026-06-15',
-      '2026-06-16',
-      '2026-07-29',
-      '2026-07-30',
-      '2026-09-16',
-      '2026-09-17',
-      '2026-10-27',
-      '2026-10-28',
-      '2026-12-17',
-      '2026-12-18',
-    };
-
-    // FOMC 2025-2026
-    final fomcDates = {
-      '2025-01-28',
-      '2025-01-29',
-      '2025-03-18',
-      '2025-03-19',
-      '2025-05-06',
-      '2025-05-07',
-      '2025-06-17',
-      '2025-06-18',
-      '2025-07-29',
-      '2025-07-30',
-      '2025-09-16',
-      '2025-09-17',
-      '2025-10-28',
-      '2025-10-29',
-      '2025-12-09',
-      '2025-12-10',
-      '2026-01-27',
-      '2026-01-28',
-      '2026-03-17',
-      '2026-03-18',
-      '2026-04-28',
-      '2026-04-29',
-      '2026-06-09',
-      '2026-06-10',
-      '2026-07-28',
-      '2026-07-29',
-      '2026-09-15',
-      '2026-09-16',
-      '2026-10-27',
-      '2026-10-28',
-      '2026-12-15',
-      '2026-12-16',
-    };
-
-    // 米雇用統計（毎月第1金曜）
-    final jobsDates = _getFirstFridays(year, month);
-    for (final d in jobsDates) {
-      events.add({
-        'date': _fmt(d),
-        'label': '米雇用統計',
-        'type': 'jobs',
-        'color': 'teal',
-      });
-    }
-
-    // 権利落ち日（毎月最終営業日の翌日≒25日前後）
-    final rightsDate = _getRightsDate(year, month);
-    if (rightsDate != null) {
-      events.add({
-        'date': _fmt(rightsDate),
-        'label': '権利落ち日',
-        'type': 'rights',
-        'color': 'indigo',
-      });
-    }
-
-    // 満月・新月
-    final moonEvents = _getMoonPhases(year, month);
-    events.addAll(moonEvents);
-
-    // 祝日
-    for (final e in holidays.entries) {
-      if (e.key.startsWith('$year-${month.toString().padLeft(2, '0')}')) {
-        events.add({
-          'date': e.key,
-          'label': '🇯🇵 ${e.value}',
-          'type': 'holiday_jp',
-          'color': 'pink',
-        });
-      }
-    }
-
-    // 米国休場
-    for (final e in usHolidays.entries) {
-      if (e.key.startsWith('$year-${month.toString().padLeft(2, '0')}')) {
-        events.add({
-          'date': e.key,
-          'label': '🇺🇸 ${e.value}',
-          'type': 'holiday_us',
-          'color': 'blueGrey',
-        });
-      }
-    }
-
-    // 日銀・FOMC
-    for (final d in bojDates) {
-      if (d.startsWith('$year-${month.toString().padLeft(2, '0')}')) {
-        events.add({
-          'date': d,
-          'label': '日銀会合',
-          'type': 'boj',
-          'color': 'brown',
-        });
-      }
-    }
-    for (final d in fomcDates) {
-      if (d.startsWith('$year-${month.toString().padLeft(2, '0')}')) {
-        events.add({
-          'date': d,
-          'label': 'FOMC',
-          'type': 'fomc',
-          'color': 'purple',
-        });
-      }
-    }
-
-    return events;
-  }
-
-  // SQ日（第2金曜）
-  List<DateTime> _getSqDates(int year, int month) {
-    final result = <DateTime>[];
-    int friCount = 0;
-    for (int d = 1; d <= 31; d++) {
-      try {
-        final dt = DateTime(year, month, d);
-        if (dt.weekday == DateTime.friday) {
-          friCount++;
-          if (friCount == 2) {
-            result.add(dt);
-            break;
-          }
-        }
-      } catch (_) {
-        break;
-      }
-    }
-    return result;
-  }
-
-  // 第1金曜（雇用統計）
-  List<DateTime> _getFirstFridays(int year, int month) {
-    for (int d = 1; d <= 7; d++) {
-      final dt = DateTime(year, month, d);
-      if (dt.weekday == DateTime.friday) return [dt];
-    }
-    return [];
-  }
-
-  // 権利落ち日（月末から3営業日前≒月の最終月曜日の翌日あたり）
-  DateTime? _getRightsDate(int year, int month) {
-    // 月末
-    final lastDay = DateTime(year, month + 1, 0);
-    // 月末から3営業日前を概算
-    for (int i = 0; i < 10; i++) {
-      final d = lastDay.subtract(Duration(days: i));
-      if (d.weekday != DateTime.saturday && d.weekday != DateTime.sunday) {
-        // 3営業日前
-        int bizCount = 0;
-        DateTime cur = lastDay;
-        while (bizCount < 2) {
-          cur = cur.subtract(const Duration(days: 1));
-          if (cur.weekday != DateTime.saturday &&
-              cur.weekday != DateTime.sunday) {
-            bizCount++;
-          }
-        }
-        return cur;
-      }
-    }
-    return null;
-  }
-
-  // 満月・新月（近似計算）
-  List<Map<String, dynamic>> _getMoonPhases(int year, int month) {
-    final result = <Map<String, dynamic>>[];
-    // 既知の新月基準日から計算（朔望月 = 29.53059日）
-    const lunarCycle = 29.53059;
-    // 2000-01-06 を基準新月とする
-    final baseNewMoon = DateTime(2000, 1, 6);
-
-    final firstDay = DateTime(year, month, 1);
-    final lastDay = DateTime(year, month + 1, 0);
-
-    double daysSinceBase = firstDay.difference(baseNewMoon).inDays.toDouble();
-    double phase = daysSinceBase % lunarCycle;
-    if (phase < 0) phase += lunarCycle;
-
-    // 今月の新月・満月を探す
-    for (double d = -lunarCycle; d <= lunarCycle * 2; d += lunarCycle / 2) {
-      // 新月（phase=0）
-      final newMoonOffset = lunarCycle - phase + d;
-      final newMoonDate = firstDay.add(Duration(days: newMoonOffset.round()));
-      if (newMoonDate.month == month && newMoonDate.year == year) {
-        result.add({
-          'date': _fmt(newMoonDate),
-          'label': '🌑 新月',
-          'type': 'new_moon',
-          'color': 'grey',
-        });
-      }
-      // 満月（phase=lunarCycle/2）
-      final fullMoonOffset = lunarCycle / 2 - phase + d;
-      final fullMoonDate = firstDay.add(Duration(days: fullMoonOffset.round()));
-      if (fullMoonDate.month == month && fullMoonDate.year == year) {
-        result.add({
-          'date': _fmt(fullMoonDate),
-          'label': '🌕 満月',
-          'type': 'full_moon',
-          'color': 'amber',
-        });
-      }
-    }
-    return result;
   }
 
   String _fmt(DateTime dt) =>
@@ -377,49 +69,37 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     return map[colorName] ?? Colors.grey;
   }
 
-  // 指定日のイベント一覧
   List<Map<String, dynamic>> _eventsForDay(DateTime day) {
     final dateStr = _fmt(day);
-    final market = _getMarketEvents(
-      day.year,
-      day.month,
-    ).where((e) => e['date'] == dateStr).toList();
+    final market = _marketEvents.where((e) => e['date'] == dateStr).toList();
     final stock = _stockEvents.where((e) => e['date'] == dateStr).toList();
     return [...market, ...stock];
   }
 
-  // 今月のすべてのイベント（日付順）
   List<MapEntry<String, List<Map<String, dynamic>>>> _allEventsThisMonth() {
-    final year = _focusedMonth.year;
-    final month = _focusedMonth.month;
-    final market = _getMarketEvents(year, month);
+    final prefix =
+        '${_focusedMonth.year}-'
+        '${_focusedMonth.month.toString().padLeft(2, '0')}';
     final stock = _stockEvents
-        .where(
-          (e) =>
-              e['date'].startsWith('$year-${month.toString().padLeft(2, '0')}'),
-        )
+        .where((e) => (e['date'] as String).startsWith(prefix))
         .toList();
-    final all = [...market, ...stock];
-
-    // 日付でグループ化
+    final all = [..._marketEvents, ...stock];
     final Map<String, List<Map<String, dynamic>>> grouped = {};
     for (final e in all) {
       grouped.putIfAbsent(e['date'] as String, () => []).add(e);
     }
-    final sorted = grouped.entries.toList()
-      ..sort((a, b) => a.key.compareTo(b.key));
-    return sorted;
+    return grouped.entries.toList()..sort((a, b) => a.key.compareTo(b.key));
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text("スケジュール"),
+        title: const Text('スケジュール'),
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh),
-            onPressed: _loadStockEvents,
+            onPressed: _loadAllEvents,
           ),
         ],
       ),
@@ -437,13 +117,12 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     );
   }
 
-  // カレンダー部分
   Widget _buildCalendar() {
     final year = _focusedMonth.year;
     final month = _focusedMonth.month;
     final firstDay = DateTime(year, month, 1);
     final daysInMonth = DateTime(year, month + 1, 0).day;
-    final startWeekday = firstDay.weekday % 7; // 0=日曜
+    final startWeekday = firstDay.weekday % 7;
 
     return Column(
       children: [
@@ -455,9 +134,10 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
             children: [
               IconButton(
                 icon: const Icon(Icons.chevron_left),
-                onPressed: () => setState(() {
-                  _focusedMonth = DateTime(year, month - 1, 1);
-                }),
+                onPressed: () {
+                  setState(() => _focusedMonth = DateTime(year, month - 1, 1));
+                  _loadAllEvents();
+                },
               ),
               Text(
                 '$year年$month月',
@@ -468,9 +148,10 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
               ),
               IconButton(
                 icon: const Icon(Icons.chevron_right),
-                onPressed: () => setState(() {
-                  _focusedMonth = DateTime(year, month + 1, 1);
-                }),
+                onPressed: () {
+                  setState(() => _focusedMonth = DateTime(year, month + 1, 1));
+                  _loadAllEvents();
+                },
               ),
             ],
           ),
@@ -517,10 +198,11 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
               final day = index - startWeekday + 1;
               final date = DateTime(year, month, day);
               final events = _eventsForDay(date);
+              final now = DateTime.now();
               final isToday =
-                  date.year == DateTime.now().year &&
-                  date.month == DateTime.now().month &&
-                  date.day == DateTime.now().day;
+                  date.year == now.year &&
+                  date.month == now.month &&
+                  date.day == now.day;
 
               return GestureDetector(
                 onTap: events.isNotEmpty
@@ -553,7 +235,6 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                               : Colors.black87,
                         ),
                       ),
-                      // イベントドット（最大3個）
                       Wrap(
                         spacing: 1,
                         children: events.take(3).map((e) {
@@ -584,15 +265,12 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
           ),
         ),
         const SizedBox(height: 8),
-
-        // 凡例
         _buildLegend(),
         const SizedBox(height: 8),
       ],
     );
   }
 
-  // 凡例
   Widget _buildLegend() {
     final legends = [
       ('決算', 'red'),
@@ -637,16 +315,14 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     );
   }
 
-  // 月のイベント一覧
   Widget _buildEventList() {
     final events = _allEventsThisMonth();
     if (events.isEmpty) {
       return const Padding(
         padding: EdgeInsets.all(32),
-        child: Text("イベントなし", style: TextStyle(color: Colors.grey)),
+        child: Text('イベントなし', style: TextStyle(color: Colors.grey)),
       );
     }
-
     return ListView.builder(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
@@ -656,13 +332,11 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
         final dateStr = entry.key;
         final dayEvents = entry.value;
         final dt = DateTime.parse(dateStr);
-
         return Padding(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // 日付
               SizedBox(
                 width: 44,
                 child: Column(
@@ -689,7 +363,6 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                 ),
               ),
               const SizedBox(width: 8),
-              // イベント一覧
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -726,7 +399,6 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     );
   }
 
-  // 日付タップ時のモーダル
   void _showDayEvents(DateTime date, List<Map<String, dynamic>> events) {
     showModalBottomSheet(
       context: context,
