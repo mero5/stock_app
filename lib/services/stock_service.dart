@@ -178,4 +178,51 @@ class StockService {
       return [];
     }
   }
+
+  static Future<Map<String, dynamic>> consult({
+    required String code,
+    required String name,
+    required String direction,
+    required String tradeType,
+    required String period,
+    required List<String> extraQuestions,
+    dynamic price,
+    dynamic rsi,
+    dynamic macd,
+    dynamic ma5,
+    dynamic ma25,
+    dynamic per,
+    dynamic pbr,
+    dynamic roe,
+    dynamic high52,
+    dynamic low52,
+  }) async {
+    try {
+      final res = await http.post(
+        Uri.parse("${Constants.backendUrl}/stock/consult"),
+        headers: {"Content-Type": "application/json"},
+        body: jsonEncode({
+          "code": code,
+          "name": name,
+          "direction": direction,
+          "trade_type": tradeType,
+          "period": period,
+          "extra_questions": extraQuestions,
+          "price": price,
+          "rsi": rsi,
+          "macd": macd,
+          "ma5": ma5,
+          "ma25": ma25,
+          "per": per,
+          "pbr": pbr,
+          "roe": roe,
+          "high52": high52,
+          "low52": low52,
+        }),
+      );
+      return jsonDecode(res.body) as Map<String, dynamic>;
+    } catch (e) {
+      return {"error": e.toString()};
+    }
+  }
 }

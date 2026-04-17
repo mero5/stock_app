@@ -23,6 +23,13 @@ class _DetailScreenState extends State<DetailScreen> {
   String error = '';
   Map<String, dynamic>? aiAnalysis;
   bool isLoadingAi = false;
+  // AI相談用
+  String _direction = '買い';
+  String _tradeType = '現物取引';
+  String _period = '短期';
+  final List<String> _extraQuestions = [];
+  Map<String, dynamic>? _consultResult;
+  bool _isConsulting = false;
 
   @override
   void initState() {
@@ -67,10 +74,11 @@ class _DetailScreenState extends State<DetailScreen> {
       return const Center(child: Text("データを取得できませんでした"));
     }
 
+    // 株価が取れない場合（市場休場など）もエラーにしない
     final candles = List<Map<String, dynamic>>.from(detail!['candles'] ?? []);
 
     return DefaultTabController(
-      length: 4,
+      length: 5,
       child: Column(
         children: [
           _buildPriceCard(
@@ -84,6 +92,7 @@ class _DetailScreenState extends State<DetailScreen> {
               Tab(icon: Icon(Icons.flag), text: "判断"),
               Tab(icon: Icon(Icons.bar_chart), text: "指標"),
               Tab(icon: Icon(Icons.smart_toy), text: "AI分析"),
+              Tab(icon: Icon(Icons.chat), text: "AI相談"),
             ],
             labelColor: Colors.blue,
             unselectedLabelColor: Colors.grey,
@@ -96,6 +105,7 @@ class _DetailScreenState extends State<DetailScreen> {
                 _buildJudgeTab(candles),
                 _buildIndicatorTab(),
                 _buildAiTab(),
+                _buildConsultTab(),
               ],
             ),
           ),
@@ -127,7 +137,7 @@ class _DetailScreenState extends State<DetailScreen> {
                     fontWeight: FontWeight.bold,
                   ),
                 ),
-                if (change != null)
+                if (change != null && changePct != null)
                   Text(
                     "${isPositive ? '+' : ''}${(change as num).toStringAsFixed(1)}  "
                     "${isPositive ? '+' : ''}${(changePct as num).toStringAsFixed(2)}%",
@@ -216,6 +226,11 @@ class _DetailScreenState extends State<DetailScreen> {
     final closes = candles
         .map((c) => (c['close'] as num?)?.toDouble() ?? 0.0)
         .toList();
+
+    if (closes.isEmpty || closes.every((v) => v == 0.0)) {
+      return const Center(child: Text("株価データを取得できませんでした（市場休場日の可能性があります）"));
+    }
+
     final latest = closes.last;
     final ma5 = (candles.last['ma5'] as num?)?.toDouble() ?? 0.0;
     final ma25 = (candles.last['ma25'] as num?)?.toDouble() ?? 0.0;
@@ -963,6 +978,309 @@ class _DetailScreenState extends State<DetailScreen> {
     );
   }
 
+  Widget _buildConsultTab() {
+    final candles = List<Map<String, dynamic>>.from(detail!['candles'] ?? []);
+    final lastCandle = candles.isNotEmpty ? candles.last : <String, dynamic>{};
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // ── グループ①：売買方向 ──
+          const Text(
+            "① 売買方向",
+            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: ['買い', '売り'].map((v) {
+              return Expanded(
+                child: RadioListTile<String>(
+                  title: Text(v),
+                  value: v,
+                  groupValue: _direction,
+                  onChanged: (val) => setState(() => _direction = val!),
+                  contentPadding: EdgeInsets.zero,
+                  dense: true,
+                ),
+              );
+            }).toList(),
+          ),
+          const Divider(),
+
+          // ── グループ②：取引種別 ──
+          const Text(
+            "② 取引種別",
+            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: ['現物取引', '信用取引'].map((v) {
+              return Expanded(
+                child: RadioListTile<String>(
+                  title: Text(v, style: const TextStyle(fontSize: 13)),
+                  value: v,
+                  groupValue: _tradeType,
+                  onChanged: (val) => setState(() => _tradeType = val!),
+                  contentPadding: EdgeInsets.zero,
+                  dense: true,
+                ),
+              );
+            }).toList(),
+          ),
+          const Divider(),
+
+          // ── グループ③：期間 ──
+          const Text(
+            "③ 期間",
+            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: ['短期', '中期', '長期'].map((v) {
+              return Expanded(
+                child: RadioListTile<String>(
+                  title: Text(v, style: const TextStyle(fontSize: 13)),
+                  value: v,
+                  groupValue: _period,
+                  onChanged: (val) => setState(() => _period = val!),
+                  contentPadding: EdgeInsets.zero,
+                  dense: true,
+                ),
+              );
+            }).toList(),
+          ),
+          const Divider(),
+
+          // ── グループ④：追加質問 ──
+          const Text(
+            "④ 追加で聞く（複数選択可）",
+            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+          ),
+          const SizedBox(height: 4),
+          ...['損切りライン', 'ファンダメンタル', 'リスク', '他銘柄比較'].map((q) {
+            return CheckboxListTile(
+              title: Text(q, style: const TextStyle(fontSize: 13)),
+              value: _extraQuestions.contains(q),
+              onChanged: (checked) {
+                setState(() {
+                  if (checked == true) {
+                    _extraQuestions.add(q);
+                  } else {
+                    _extraQuestions.remove(q);
+                  }
+                });
+              },
+              contentPadding: EdgeInsets.zero,
+              dense: true,
+            );
+          }),
+          const SizedBox(height: 12),
+
+          // ── 相談ボタン ──
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: _isConsulting ? null : () => _runConsult(lastCandle),
+              icon: const Icon(Icons.chat),
+              label: Text(_isConsulting ? "相談中..." : "AIに相談する"),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.blue,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 14),
+              ),
+            ),
+          ),
+          const SizedBox(height: 20),
+
+          // ── 結果表示 ──
+          if (_isConsulting) const Center(child: CircularProgressIndicator()),
+
+          if (_consultResult != null && !_isConsulting)
+            _buildConsultResult(_consultResult!),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _runConsult(Map<String, dynamic> lastCandle) async {
+    setState(() {
+      _isConsulting = true;
+      _consultResult = null;
+    });
+    try {
+      final result = await StockService.consult(
+        code: widget.code,
+        name: widget.name,
+        direction: _direction,
+        tradeType: _tradeType,
+        period: _period,
+        extraQuestions: _extraQuestions,
+        price: detail!['price'],
+        rsi: lastCandle['rsi'],
+        macd: lastCandle['macd'],
+        ma5: lastCandle['ma5'],
+        ma25: lastCandle['ma25'],
+        per: detail!['per'],
+        pbr: detail!['pbr'],
+        roe: detail!['roe'],
+        high52: detail!['high52'],
+        low52: detail!['low52'],
+      );
+      setState(() => _consultResult = result);
+    } finally {
+      setState(() => _isConsulting = false);
+    }
+  }
+
+  Widget _buildConsultResult(Map<String, dynamic> r) {
+    if (r.containsKey('error')) {
+      return Card(
+        color: Colors.red.shade50,
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Text(
+            "エラー: ${r['error']}",
+            style: const TextStyle(color: Colors.red),
+          ),
+        ),
+      );
+    }
+
+    final judgment = r['judgment'] as String? ?? '';
+    final judgeMap = {
+      '適切': (Colors.green, Icons.check_circle),
+      '要注意': (Colors.orange, Icons.warning),
+      '不適切': (Colors.red, Icons.cancel),
+    };
+    final (judgeColor, judgeIcon) =
+        judgeMap[judgment] ?? (Colors.grey, Icons.help);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // 総合判定
+        Card(
+          elevation: 3,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(12),
+              gradient: LinearGradient(
+                colors: [judgeColor.withOpacity(0.1), Colors.white],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+            ),
+            child: Column(
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(judgeIcon, color: judgeColor, size: 24),
+                    const SizedBox(width: 8),
+                    Text(
+                      "$_direction・$_tradeType・$_period → $judgment",
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: judgeColor,
+                      ),
+                    ),
+                  ],
+                ),
+                if ((r['judgment_reason'] ?? '').isNotEmpty) ...[
+                  const SizedBox(height: 10),
+                  Text(
+                    r['judgment_reason'],
+                    style: const TextStyle(fontSize: 13),
+                    textAlign: TextAlign.center,
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
+
+        // アドバイス
+        if ((r['advice'] ?? '').isNotEmpty)
+          _consultSection("💡 アドバイス", r['advice'], Colors.blue),
+        const SizedBox(height: 8),
+
+        // 注意点
+        if ((r['caution'] ?? '').isNotEmpty)
+          _consultSection("⚠️ 注意点", r['caution'], Colors.orange),
+        const SizedBox(height: 8),
+
+        // 損切りライン
+        if ((r['stop_loss'] ?? '').isNotEmpty)
+          _consultSection("✂️ 損切りライン", r['stop_loss'], Colors.red),
+        const SizedBox(height: 8),
+
+        // ファンダコメント
+        if ((r['fundamental_comment'] ?? '').isNotEmpty)
+          _consultSection(
+            "📊 ファンダメンタル",
+            r['fundamental_comment'],
+            Colors.purple,
+          ),
+        const SizedBox(height: 16),
+
+        // 免責
+        Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: Colors.amber.shade50,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: Colors.amber.shade200),
+          ),
+          child: const Row(
+            children: [
+              Icon(Icons.info_outline, color: Colors.amber, size: 16),
+              SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  "このAI相談は参考値です。投資判断は自己責任でお願いします。",
+                  style: TextStyle(fontSize: 11, color: Colors.brown),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _consultSection(String title, String content, Color color) {
+    return Card(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              title,
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: 13,
+                color: color,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(content, style: const TextStyle(fontSize: 13, height: 1.6)),
+          ],
+        ),
+      ),
+    );
+  }
+
   Future<void> _loadAiAnalysis() async {
     setState(() => isLoadingAi = true);
     try {
@@ -1461,6 +1779,7 @@ class _DetailScreenState extends State<DetailScreen> {
     final closeSpots = data
         .asMap()
         .entries
+        .where((e) => e.value['close'] != null)
         .map(
           (e) => FlSpot(e.key.toDouble(), (e.value['close'] as num).toDouble()),
         )
@@ -1559,6 +1878,7 @@ class _DetailScreenState extends State<DetailScreen> {
     final closeSpots = data
         .asMap()
         .entries
+        .where((e) => e.value['close'] != null)
         .map(
           (e) => FlSpot(e.key.toDouble(), (e.value['close'] as num).toDouble()),
         )

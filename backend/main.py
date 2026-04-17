@@ -959,3 +959,82 @@ def get_market_events(year: int, month: int):
             })
 
     return results
+
+# ===================================================
+# AI相談API
+# ===================================================
+
+@app.post("/stock/consult")
+async def stock_consult(request: Request):
+    """
+    チェックボックスで選択した条件をもとにChatGPTに相談
+    """
+    body = await request.json()
+    code            = body.get("code", "")
+    name            = body.get("name", "")
+    direction       = body.get("direction", "")       # 買い / 売り
+    trade_type      = body.get("trade_type", "")      # 現物 / 信用
+    period          = body.get("period", "")          # 短期 / 中期 / 長期
+    extra_questions = body.get("extra_questions", []) # 追加質問リスト
+
+    # 株価データ
+    price      = body.get("price")
+    rsi        = body.get("rsi")
+    macd       = body.get("macd")
+    ma5        = body.get("ma5")
+    ma25       = body.get("ma25")
+    per        = body.get("per")
+    pbr        = body.get("pbr")
+    roe        = body.get("roe")
+    high52     = body.get("high52")
+    low52      = body.get("low52")
+
+    extra_text = ""
+    if "損切りライン" in extra_questions:
+        extra_text += "\n・損切りラインの目安はどこか？"
+    if "ファンダメンタル" in extra_questions:
+        extra_text += "\n・ファンダメンタル的な評価はどうか？"
+    if "リスク" in extra_questions:
+        extra_text += "\n・主なリスクは何か？"
+    if "他銘柄比較" in extra_questions:
+        extra_text += "\n・同業他社と比べて優位性はあるか？"
+
+    prompt = f"""
+あなたは株式投資の専門アドバイザーです。以下の条件と株価データをもとに、具体的なアドバイスをしてください。
+
+【銘柄】{name}（{code}）
+【相談内容】{direction}・{trade_type}・{period}の場合、この銘柄はどうか？{extra_text}
+
+【株価データ】
+現在株価: {price}円
+MA5: {ma5} / MA25: {ma25}
+RSI: {rsi}
+MACD: {macd}
+52週高値: {high52} / 52週安値: {low52}
+PER: {per}倍 / PBR: {pbr}倍 / ROE: {roe}
+
+以下の形式で日本語で回答してください：
+{{
+  "judgment": "適切" か "要注意" か "不適切" のいずれか,
+  "judgment_reason": "判断理由を2〜3文で",
+  "advice": "具体的なアドバイスを3〜5文で",
+  "caution": "注意点を2〜3文で",
+  "stop_loss": "損切りラインの目安（損切りラインの質問がある場合のみ、ない場合は空文字）",
+  "fundamental_comment": "ファンダメンタルコメント（ファンダ質問がある場合のみ、ない場合は空文字）"
+}}
+"""
+
+    try:
+        res = openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "あなたは日本株・米国株に詳しい投資アドバイザーです。必ずJSON形式のみで返してください。"},
+                {"role": "user",   "content": prompt}
+            ],
+            max_tokens=1000,
+        )
+        raw = res.choices[0].message.content.strip()
+        raw = raw.replace("```json", "").replace("```", "").strip()
+        return json.loads(raw)
+    except Exception as e:
+        return {"error": str(e)}
