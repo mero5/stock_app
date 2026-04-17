@@ -225,4 +225,33 @@ class StockService {
       return {"error": e.toString()};
     }
   }
+
+  static Future<Map<String, dynamic>> getNikkeiMonthly(
+    int year,
+    int month,
+  ) async {
+    try {
+      final res = await http.get(
+        Uri.parse(
+          "${Constants.backendUrl}/nikkei/monthly?year=$year&month=$month",
+        ),
+      );
+      return jsonDecode(res.body) as Map<String, dynamic>;
+    } catch (e) {
+      print('日経平均取得エラー: $e');
+      return {};
+    }
+  }
+
+  static Future<Map<String, dynamic>> getSectorTrends() async {
+    try {
+      final res = await http.get(
+        Uri.parse("${Constants.backendUrl}/market/sectors"),
+      );
+      return jsonDecode(res.body) as Map<String, dynamic>;
+    } catch (e) {
+      print('セクター取得エラー: $e');
+      return {"jp": [], "us": []};
+    }
+  }
 }

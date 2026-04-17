@@ -14,6 +14,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
   List<Map<String, dynamic>> _stockEvents = [];
   List<Map<String, dynamic>> _marketEvents = [];
   bool _isLoading = false;
+  Map<String, dynamic> _nikkeiData = {};
 
   @override
   void initState() {
@@ -30,14 +31,16 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
 
       final futures = <Future>[
         StockService.getMarketEvents(year, month),
+        StockService.getNikkeiMonthly(year, month), // ← 追加
         if (codes.isNotEmpty) StockService.getStockEvents(codes),
       ];
       final results = await Future.wait(futures);
 
       setState(() {
         _marketEvents = results[0] as List<Map<String, dynamic>>;
+        _nikkeiData = results[1] as Map<String, dynamic>; // ← 追加
         _stockEvents = codes.isNotEmpty
-            ? results[1] as List<Map<String, dynamic>>
+            ? results[2] as List<Map<String, dynamic>>
             : [];
       });
     } catch (e) {
@@ -190,7 +193,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
             physics: const NeverScrollableScrollPhysics(),
             gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
               crossAxisCount: 7,
-              childAspectRatio: 0.75,
+              childAspectRatio: 0.65,
             ),
             itemCount: startWeekday + daysInMonth,
             itemBuilder: (context, index) {
@@ -235,6 +238,45 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                               : Colors.black87,
                         ),
                       ),
+
+                      // ★ 日経平均騰落表示 ★
+                      Builder(
+                        builder: (context) {
+                          final nk = _nikkeiData[_fmt(date)];
+                          if (nk == null) return const SizedBox();
+                          final change = (nk['change'] as num).toDouble();
+                          final changePct = (nk['change_pct'] as num)
+                              .toDouble();
+                          final intensity = (changePct.abs() / 3.0).clamp(
+                            0.2,
+                            1.0,
+                          );
+                          final color = change >= 0
+                              ? Colors.red.withOpacity(intensity)
+                              : Colors.green.withOpacity(intensity);
+                          final sign = change >= 0 ? '+' : '';
+                          return Container(
+                            width: double.infinity, // ← 追加（横いっぱいに）
+                            margin: const EdgeInsets.only(top: 1),
+                            padding: const EdgeInsets.symmetric(vertical: 1),
+                            decoration: BoxDecoration(
+                              color: color.withOpacity(0.2), // ← 少し濃く
+                              borderRadius: BorderRadius.circular(2),
+                            ),
+                            child: Text(
+                              '$sign${changePct.toStringAsFixed(1)}%',
+                              style: TextStyle(
+                                fontSize: 9, // ← 7から9に
+                                color: color,
+                                fontWeight: FontWeight.bold,
+                              ),
+                              textAlign: TextAlign.center,
+                            ),
+                          );
+                        },
+                      ),
+
+                      // イベントドット（最大3個）
                       Wrap(
                         spacing: 1,
                         children: events.take(3).map((e) {
@@ -288,29 +330,102 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     ];
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12),
-      child: Wrap(
-        spacing: 8,
-        runSpacing: 4,
-        children: legends.map((l) {
-          return Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: 8,
-                height: 8,
-                decoration: BoxDecoration(
-                  color: _eventColor(l.$2),
-                  shape: BoxShape.circle,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // 日経平均の説明
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+            margin: const EdgeInsets.only(bottom: 8),
+            decoration: BoxDecoration(
+              color: Colors.grey.shade100,
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Row(
+              children: [
+                Container(
+                  width: 28,
+                  height: 14,
+                  decoration: BoxDecoration(
+                    color: Colors.red.withOpacity(0.3),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                  child: const Center(
+                    child: Text(
+                      '+1.2%',
+                      style: TextStyle(
+                        fontSize: 7,
+                        color: Colors.red,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
                 ),
-              ),
-              const SizedBox(width: 3),
-              Text(
-                l.$1,
-                style: const TextStyle(fontSize: 10, color: Colors.black54),
-              ),
-            ],
-          );
-        }).toList(),
+                const SizedBox(width: 4),
+                const Text(
+                  '上昇',
+                  style: TextStyle(fontSize: 10, color: Colors.red),
+                ),
+                const SizedBox(width: 12),
+                Container(
+                  width: 28,
+                  height: 14,
+                  decoration: BoxDecoration(
+                    color: Colors.green.withOpacity(0.3),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                  child: const Center(
+                    child: Text(
+                      '-1.2%',
+                      style: TextStyle(
+                        fontSize: 7,
+                        color: Colors.green,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 4),
+                const Text(
+                  '下落',
+                  style: TextStyle(fontSize: 10, color: Colors.green),
+                ),
+                const SizedBox(width: 4),
+                const Text(
+                  '← 日経平均の騰落（色が濃いほど変動大）',
+                  style: TextStyle(fontSize: 10, color: Colors.black54),
+                ),
+              ],
+            ),
+          ),
+
+          // イベント凡例
+          Wrap(
+            spacing: 8,
+            runSpacing: 4,
+            children: legends.map((l) {
+              return Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 8,
+                    height: 8,
+                    decoration: BoxDecoration(
+                      color: _eventColor(l.$2),
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                  const SizedBox(width: 3),
+                  Text(
+                    l.$1,
+                    style: const TextStyle(fontSize: 10, color: Colors.black54),
+                  ),
+                ],
+              );
+            }).toList(),
+          ),
+        ],
       ),
     );
   }
@@ -416,6 +531,62 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
               style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 12),
+
+            // ★ 日経平均カード ★
+            Builder(
+              builder: (context) {
+                final nk = _nikkeiData[_fmt(date)];
+                if (nk == null) return const SizedBox();
+                final change = (nk['change'] as num).toDouble();
+                final changePct = (nk['change_pct'] as num).toDouble();
+                final close = (nk['close'] as num).toDouble();
+                final isPlus = change >= 0;
+                final sign = isPlus ? '+' : '';
+                final color = isPlus ? Colors.red : Colors.green;
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: color.withOpacity(0.08),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: color.withOpacity(0.3)),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text(
+                          '📈 日経平均',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 13,
+                          ),
+                        ),
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            Text(
+                              '¥${close.toStringAsFixed(0)}',
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 14,
+                                color: color,
+                              ),
+                            ),
+                            Text(
+                              '$sign${change.toStringAsFixed(0)}円  $sign${changePct.toStringAsFixed(2)}%',
+                              style: TextStyle(fontSize: 12, color: color),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+
+            // イベント一覧
             ...events.map(
               (e) => Padding(
                 padding: const EdgeInsets.only(bottom: 10),

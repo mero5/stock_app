@@ -9,6 +9,7 @@ import 'search_screen.dart';
 import 'detail_screen.dart';
 import 'youtube_screen.dart';
 import 'schedule_screen.dart';
+import 'market_screen.dart'; // ← 追加
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -67,6 +68,37 @@ class _HomeScreenState extends State<HomeScreen> {
       _editMode = false;
       _selectedCodes = [];
     });
+  }
+
+  // ログアウト確認ダイアログ
+  Future<void> _confirmLogout() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('ログアウト'),
+        content: const Text('ログアウトしますか？'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('キャンセル'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('ログアウト', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      await Amplify.Auth.signOut();
+      if (mounted) {
+        Navigator.pushAndRemoveUntil(
+          context,
+          MaterialPageRoute(builder: (_) => const LoginScreen()),
+          (route) => false,
+        );
+      }
+    }
   }
 
   Widget _buildHomeTab() {
@@ -161,11 +193,31 @@ class _HomeScreenState extends State<HomeScreen> {
       appBar: AppBar(
         title: const Text("株アプリ"),
         actions: [
+          // 編集ボタン（ホームタブのみ）
           if (_currentIndex == 0)
             IconButton(
               icon: Icon(_editMode ? Icons.check : Icons.edit),
               onPressed: _toggleEditMode,
             ),
+          // ログアウトボタン（右上メニュー）
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.more_vert),
+            onSelected: (value) {
+              if (value == 'logout') _confirmLogout();
+            },
+            itemBuilder: (_) => [
+              const PopupMenuItem(
+                value: 'logout',
+                child: Row(
+                  children: [
+                    Icon(Icons.logout, color: Colors.red, size: 18),
+                    SizedBox(width: 8),
+                    Text('ログアウト', style: TextStyle(color: Colors.red)),
+                  ],
+                ),
+              ),
+            ],
+          ),
         ],
       ),
       body: IndexedStack(
@@ -180,24 +232,12 @@ class _HomeScreenState extends State<HomeScreen> {
             },
           ),
           const YoutubeScreen(),
-          const ScheduleScreen(), // ← 追加
-          Center(
-            child: ElevatedButton(
-              onPressed: () async {
-                await Amplify.Auth.signOut();
-                Navigator.pushAndRemoveUntil(
-                  context,
-                  MaterialPageRoute(builder: (_) => const LoginScreen()),
-                  (route) => false,
-                );
-              },
-              child: const Text('ログアウト'),
-            ),
-          ),
+          const ScheduleScreen(),
+          const MarketScreen(), // ← 追加
         ],
       ),
       bottomNavigationBar: BottomNavigationBar(
-        type: BottomNavigationBarType.fixed, // ← 追加（5個以上必須）
+        type: BottomNavigationBarType.fixed,
         currentIndex: _currentIndex,
         onTap: (index) async {
           if (index == 0) await loadFavorites();
@@ -208,17 +248,20 @@ class _HomeScreenState extends State<HomeScreen> {
           });
         },
         items: const [
-          BottomNavigationBarItem(icon: Icon(Icons.home), label: 'ホーム'),
-          BottomNavigationBarItem(icon: Icon(Icons.add), label: '追加'),
+          BottomNavigationBarItem(icon: Icon(Icons.home), label: "ホーム"),
+          BottomNavigationBarItem(icon: Icon(Icons.add), label: "追加"),
           BottomNavigationBarItem(
             icon: Icon(Icons.play_circle),
-            label: 'YouTube',
+            label: "YouTube",
           ),
           BottomNavigationBarItem(
             icon: Icon(Icons.calendar_month),
-            label: 'スケジュール',
-          ), // ← 追加
-          BottomNavigationBarItem(icon: Icon(Icons.logout), label: 'ログアウト'),
+            label: "スケジュール",
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.bar_chart),
+            label: "マーケット",
+          ), // ← ログアウト→マーケット
         ],
       ),
     );

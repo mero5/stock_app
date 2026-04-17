@@ -961,6 +961,46 @@ def get_market_events(year: int, month: int):
     return results
 
 # ===================================================
+# 日経平均月次データAPI
+# ===================================================
+
+@app.get("/nikkei/monthly")
+def get_nikkei_monthly(year: int, month: int):
+    """
+    指定年月の日経平均の日次騰落データを返す
+    """
+    import datetime
+    try:
+        ticker = yf.Ticker("^N225")
+        # 前月末も含めて取得（前日比計算のため）
+        start = datetime.date(year, month, 1) - datetime.timedelta(days=5)
+        end   = datetime.date(year, month + 1, 1) if month < 12 \
+                else datetime.date(year + 1, 1, 1)
+        hist  = ticker.history(start=str(start), end=str(end))
+
+        result = {}
+        prev_close = None
+        for date, row in hist.iterrows():
+            close = round(float(row["Close"]), 2)
+            date_str = str(date.date())
+            if prev_close is not None and date_str.startswith(
+                f"{year}-{str(month).zfill(2)}"
+            ):
+                change     = round(close - prev_close, 2)
+                change_pct = round((change / prev_close) * 100, 2)
+                result[date_str] = {
+                    "close":      close,
+                    "change":     change,
+                    "change_pct": change_pct,
+                }
+            prev_close = close
+
+        return result
+    except Exception as e:
+        print(f"日経平均取得エラー: {e}")
+        return {}
+
+# ===================================================
 # AI相談API
 # ===================================================
 
@@ -1038,3 +1078,81 @@ PER: {per}倍 / PBR: {pbr}倍 / ROE: {roe}
         return json.loads(raw)
     except Exception as e:
         return {"error": str(e)}
+
+
+# ===================================================
+# セクタートレンドAPI
+# ===================================================
+
+@app.get("/market/sectors")
+def get_sector_trends():
+    """
+    日本・米国の主要セクターETFの騰落を取得して返す
+    """
+    import datetime
+
+    # 日本セクターETF（東証ETF）
+    jp_sectors = {
+        "銀行":     "1615.T",
+        "電気機器": "1617.T",
+        "自動車":   "1622.T",
+        "不動産":   "1621.T",
+        "食品":     "1619.T",
+        "医薬品":   "1620.T",
+        "情報通信": "1618.T",
+        "素材":     "1623.T",
+    }
+
+    # 米国セクターETF（SPDR）
+    us_sectors = {
+        "テクノロジー":   "XLK",
+        "ヘルスケア":     "XLV",
+        "金融":           "XLF",
+        "エネルギー":     "XLE",
+        "一般消費財":     "XLY",
+        "生活必需品":     "XLP",
+        "公益":           "XLU",
+        "不動産(US)":     "XLRE",
+        "素材(US)":       "XLB",
+        "通信":           "XLC",
+        "資本財":         "XLI",
+        "AI/半導体":      "SOXX",
+    }
+
+    result = {"jp": [], "us": []}
+
+    for name, ticker_code in {**jp_sectors, **us_sectors}.items():
+        try:
+            ticker = yf.Ticker(ticker_code)
+            hist = ticker.history(period="6d")
+            if len(hist) < 2:
+                continue
+            prev  = float(hist["Close"].iloc[-2])
+            close = float(hist["Close"].iloc[-1])
+            change     = round(close - prev, 2)
+            change_pct = round((change / prev) * 100, 2)
+
+            # 5日トレンド
+            trend_5d = round(
+                (close - float(hist["Close"].iloc[0])) / float(hist["Close"].iloc[0]) * 100, 2
+            ) if len(hist) >= 5 else change_pct
+
+            item = {
+                "name":       name,
+                "ticker":     ticker_code,
+                "change_pct": change_pct,
+                "trend_5d":   trend_5d,
+            }
+
+            if ticker_code in us_sectors.values():
+                result["us"].append(item)
+            else:
+                result["jp"].append(item)
+        except Exception as e:
+            print(f"セクター取得エラー {ticker_code}: {e}")
+
+    # 騰落率でソート
+    result["jp"].sort(key=lambda x: x["change_pct"], reverse=True)
+    result["us"].sort(key=lambda x: x["change_pct"], reverse=True)
+
+    return result
