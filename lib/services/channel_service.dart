@@ -21,7 +21,7 @@ class ChannelService {
         return List<Map<String, String>>.from(
           (data['channels'] as List).map(
             (c) => {
-              'channel_id': c['channelId'] as String,
+              'channel_id': (c['id'] ?? c['channelId'] ?? '') as String,
               'name': c['title'] as String,
               'thumbnail': (c['thumbnail'] ?? '') as String,
               'description': (c['description'] ?? '') as String,
