@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:amplify_flutter/amplify_flutter.dart';
 import '../services/auth_service.dart';
 import 'home_screen.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'terms_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -57,10 +59,20 @@ class _LoginScreenState extends State<LoginScreen> {
         passwordController.text,
       );
       if (success) {
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(builder: (_) => const HomeScreen()),
-        );
+        // 利用規約同意済みかチェック
+        final prefs = await SharedPreferences.getInstance();
+        final agreed = prefs.getBool('terms_agreed') ?? false;
+
+        if (mounted) {
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(
+              builder: (_) => agreed
+                  ? const HomeScreen()
+                  : const TermsScreen(), // ← 未同意なら利用規約画面へ
+            ),
+          );
+        }
       }
     } catch (e) {
       ScaffoldMessenger.of(

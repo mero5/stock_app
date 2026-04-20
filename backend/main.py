@@ -318,33 +318,21 @@ def get_stock_price(code: str):
         else:
             ticker = yf.Ticker(code)
 
-        info = ticker.info
-        price = (
-            info.get("currentPrice") or
-            info.get("regularMarketPrice") or
-            info.get("previousClose")
-        )
-        prev_close = info.get("previousClose")
-
-        if price and prev_close:
-            change = round(price - prev_close, 2)
-            change_pct = round((change / prev_close) * 100, 2)
-        else:
-            # 履歴から計算
-            hist = ticker.history(period="5d")
-            if not hist.empty:
-                if price is None:
-                    price = float(hist["Close"].iloc[-1])
-                if len(hist) >= 2:
-                    prev = float(hist["Close"].iloc[-2])
-                    change = round(price - prev, 2)
-                    change_pct = round((change / prev) * 100, 2)
-                else:
-                    change = None
-                    change_pct = None
+        hist = ticker.history(period="2d")
+        if not hist.empty:
+            price = round(float(hist["Close"].iloc[-1]), 2)
+            if len(hist) >= 2:
+                prev = round(float(hist["Close"].iloc[-2]), 2)
+                change = round(price - prev, 2)
+                change_pct = round((change / prev) * 100, 2)
             else:
                 change = None
                 change_pct = None
+        else:
+            info = ticker.info
+            price = info.get("currentPrice") or info.get("previousClose")
+            change = None
+            change_pct = None
 
         return {
             "code": code,

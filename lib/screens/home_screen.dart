@@ -490,6 +490,11 @@ class _HomeScreenState extends State<HomeScreen> {
               tooltip: '銘柄を追加',
               onPressed: () async {
                 print('🔍 プラスボタン押された');
+                // 編集モードをリセット
+                setState(() {
+                  _editMode = false;
+                  _selectedCodes = [];
+                });
                 await Navigator.push(
                   context,
                   MaterialPageRoute(
