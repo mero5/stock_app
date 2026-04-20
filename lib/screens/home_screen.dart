@@ -215,7 +215,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             for (final stock in watchList) {
                               try {
                                 final result = await StockService.consult(
-                                  code: stock.code,
+                                  code: stock.displayCode,
                                   name: stock.name,
                                   direction: '買い',
                                   tradeType: '現物取引',
@@ -226,7 +226,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                   ),
                                 );
                                 results.add({
-                                  'code': stock.code,
+                                  'code': stock.displayCode,
                                   'name': stock.name,
                                   'price': stock.price,
                                   'change': stock.change,
@@ -234,7 +234,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                   ...result,
                                 });
                               } catch (e) {
-                                print('AI診断エラー ${stock.code}: $e');
+                                print('AI診断エラー ${stock.displayCode}: $e');
                               }
                             }
                             setModalState(() {
@@ -393,16 +393,21 @@ class _HomeScreenState extends State<HomeScreen> {
             itemCount: watchList.length,
             itemBuilder: (context, index) {
               final stock = watchList[index];
-              final isSelected = _selectedCodes.contains(stock.code);
+              final isSelected = _selectedCodes.contains(stock.displayCode);
               return ListTile(
                 leading: _editMode
                     ? Checkbox(
                         value: isSelected,
-                        onChanged: (_) => _toggleSelect(stock.code),
+                        onChanged: (_) => _toggleSelect(stock.displayCode),
                       )
                     : const Icon(Icons.show_chart),
                 title: Text(stock.name),
-                subtitle: Text(stock.code),
+                subtitle: Text(
+                  // 5桁の日本株コードは末尾の0を除いて4桁で表示
+                  RegExp(r'^\d{5}$').hasMatch(stock.displayCode)
+                      ? stock.displayCode.substring(0, 4)
+                      : stock.displayCode,
+                ),
                 trailing: _editMode
                     ? null
                     : Column(
@@ -429,13 +434,13 @@ class _HomeScreenState extends State<HomeScreen> {
                         ],
                       ),
                 onTap: _editMode
-                    ? () => _toggleSelect(stock.code)
+                    ? () => _toggleSelect(stock.displayCode)
                     : () {
                         Navigator.push(
                           context,
                           MaterialPageRoute(
                             builder: (_) => DetailScreen(
-                              code: stock.code,
+                              code: stock.displayCode,
                               name: stock.name,
                             ),
                           ),
@@ -483,8 +488,9 @@ class _HomeScreenState extends State<HomeScreen> {
             IconButton(
               icon: const Icon(Icons.add),
               tooltip: '銘柄を追加',
-              onPressed: () {
-                Navigator.push(
+              onPressed: () async {
+                print('🔍 プラスボタン押された');
+                await Navigator.push(
                   context,
                   MaterialPageRoute(
                     builder: (_) => SearchScreen(
@@ -495,6 +501,8 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                   ),
                 );
+                // 戻ってきたときにも更新
+                await loadFavorites();
               },
             ),
             // 編集ボタン

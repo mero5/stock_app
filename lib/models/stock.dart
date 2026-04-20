@@ -36,4 +36,13 @@ class Stock {
       'is_positive': isPositive ? 'true' : 'false',
     };
   }
+
+  // stock.dart に追加
+  String get displayCode {
+    // 5桁の数字コードは4桁で表示
+    if (RegExp(r'^\d{5}$').hasMatch(code)) {
+      return code.substring(0, 4);
+    }
+    return code;
+  }
 }

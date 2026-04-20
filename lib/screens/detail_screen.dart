@@ -126,7 +126,10 @@ class _DetailScreenState extends State<DetailScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  widget.code,
+                  // 5桁→4桁表示
+                  RegExp(r'^\d{5}$').hasMatch(widget.code)
+                      ? widget.code.substring(0, 4)
+                      : widget.code,
                   style: const TextStyle(color: Colors.grey, fontSize: 12),
                 ),
                 const SizedBox(height: 4),
