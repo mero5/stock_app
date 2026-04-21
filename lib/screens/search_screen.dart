@@ -110,7 +110,7 @@ class _SearchScreenState extends State<SearchScreen> {
             padding: const EdgeInsets.all(16),
             child: TextField(
               controller: controller,
-              autofocus: true,
+              // autofocus: true,
               onChanged: (value) {
                 setState(() {}); // ← controllerの変化をUIに反映
                 search(value);

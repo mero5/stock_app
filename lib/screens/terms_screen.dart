@@ -17,7 +17,7 @@ class _TermsScreenState extends State<TermsScreen> {
     'ai': false,
     'holiday': false,
     'service': false,
-    'privacy': false,
+    'data': false,
   };
   bool _isLoading = false;
 
@@ -119,12 +119,12 @@ class _TermsScreenState extends State<TermsScreen> {
                         '本アプリは個人が開発した非公式の投資情報アプリです。金融商品取引業者ではありません。予告なくサービス内容の変更・停止を行う場合があります。',
                   ),
                   _termItem(
-                    key: 'privacy',
-                    icon: Icons.lock,
-                    color: Colors.indigo,
-                    title: 'ログイン情報・データの管理方法を理解しました',
+                    key: 'data',
+                    icon: Icons.cloud,
+                    color: Colors.teal,
+                    title: 'データ管理・プライバシーについて理解しました',
                     body:
-                        'ログイン情報はAWS Cognitoで安全に管理されます。パスワードは暗号化されて保存され、本アプリが直接パスワードを参照することはありません。ウォッチリスト等のデータはAWS DynamoDBに保存されます。',
+                        '本アプリでは、ログイン情報およびユーザーデータをAWS CognitoおよびDynamoDBなどのクラウドサービスを用いて安全に管理しています。パスワードは暗号化されて保存され、本アプリが直接参照することはありません。ユーザーの登録情報（メールアドレス・お気に入り銘柄等）は、システムの運用・保守・不具合対応の目的に限り、運営者がアクセスする場合があります。これらの情報は、法令に基づく場合を除き、ユーザーの同意なく第三者へ提供・公開されることはありません。',
                   ),
 
                   const SizedBox(height: 8),
