@@ -1144,3 +1144,260 @@ def get_sector_trends():
     result["us"].sort(key=lambda x: x["change_pct"], reverse=True)
 
     return result
+
+
+@app.post("/stock/swing_analysis")
+async def swing_analysis(request: Request):
+    body = await request.json()
+    code   = body.get("code", "")
+    name   = body.get("name", "")
+    period = body.get("period", "短期")
+    score  = body.get("score", "不明")
+
+    # テクニカル
+    price    = body.get("price")
+    rsi      = body.get("rsi")
+    macd     = body.get("macd")
+    ma5      = body.get("ma5")
+    ma25     = body.get("ma25")
+    bb_upper = body.get("bb_upper")
+    bb_mid   = body.get("bb_mid")
+    bb_lower = body.get("bb_lower")
+
+    # ファンダ
+    per            = body.get("per")
+    pbr            = body.get("pbr")
+    roe            = body.get("roe")
+    revenue_growth = body.get("revenue_growth")
+    dividend_yield = body.get("dividend_yield")
+
+    # ニュース
+    news_list = body.get("news", [])
+    news_summary = "\n".join([
+        f"・{n.get('title','')}"
+        for n in news_list[:5] if n.get('title')
+    ]) or "なし"
+
+    # マクロ
+    def get_price_val(ticker_code):
+        try:
+            t = yf.Ticker(ticker_code)
+            hist = t.history(period="2d")
+            if not hist.empty:
+                return round(float(hist["Close"].iloc[-1]), 2)
+        except:
+            pass
+        return None
+
+    def get_trend(ticker_code):
+        try:
+            t = yf.Ticker(ticker_code)
+            hist = t.history(period="5d")
+            if len(hist) >= 2:
+                pct = (float(hist["Close"].iloc[-1]) - float(hist["Close"].iloc[0])) / float(hist["Close"].iloc[0]) * 100
+                if pct > 1:   return f"上昇トレンド（+{pct:.1f}%）"
+                elif pct < -1: return f"下落トレンド（{pct:.1f}%）"
+                else:          return f"横ばい（{pct:.1f}%）"
+        except:
+            pass
+        return "不明"
+
+    vix          = get_price_val("^VIX")
+    us10y        = get_price_val("^TNX")
+    usd_jpy      = get_price_val("USDJPY=X")
+    oil_price    = get_price_val("CL=F")
+    gold_price   = get_price_val("GC=F")
+    nikkei_trend = get_trend("^N225")
+    us_trend     = get_trend("^GSPC")
+
+    # ── 期間別プロンプト ──
+    if period == "短期":
+        prompt = f"""
+あなたは日本株の短期スイングトレード専門アナリストです。
+
+以下のデータを元に{name}（{code}）が1〜2週間で「上昇・様子見・下落」のどれになるかを確率ベースで判断してください。
+
+【前提】
+- テクニカルと市場環境とマクロを最優先
+- すべての判断には具体的な数値を引用した理由を付ける（3文以上）
+- 不明なデータは「データなし」と記載
+- 確率の合計は必ず100にすること
+- JSONのみ出力（前置き・説明文禁止）
+
+【テクニカル指標】
+現在株価：{price}円 / RSI(14)：{rsi} / MACD：{macd}
+ボリンジャーバンド：上限{bb_upper}円 / 中央{bb_mid}円 / 下限{bb_lower}円
+MA5：{ma5}円 / MA25：{ma25}円
+
+【ファンダメンタル】
+PER：{per}倍 / PBR：{pbr}倍 / ROE：{roe} / 売上成長率：{revenue_growth}
+
+【マクロ・市場環境】
+日経平均トレンド：{nikkei_trend} / VIX：{vix} / 米10年債：{us10y}%
+ドル円：{usd_jpy}円 / 原油：{oil_price}ドル / 金：{gold_price}ドル / S&P500：{us_trend}
+
+【最近のニュース】
+{news_summary}
+
+【参考スコア】
+テクニカル＋ファンダ総合スコア：{score}点
+
+以下のJSON形式で回答：
+{{
+  "verdict": {{ "value": "up/sideways/down", "reason": "3〜5文で具体的に" }},
+  "probability": {{
+    "up":       {{ "value": 上昇確率(整数), "reason": "3文以上で具体的に" }},
+    "sideways": {{ "value": 様子見確率(整数), "reason": "3文以上で具体的に" }},
+    "down":     {{ "value": 下落確率(整数), "reason": "3文以上で具体的に" }}
+  }},
+  "confidence": {{ "value": "high/medium/low", "reason": "2〜3文で" }},
+  "macro_analysis": {{
+    "risk_mode":            {{ "value": "risk_on/risk_off/neutral", "reason": "具体的な数値を引用して3文で" }},
+    "usd_jpy_impact":       {{ "value": "positive/negative/neutral", "reason": "2〜3文で" }},
+    "interest_rate_impact": {{ "value": "positive/negative/neutral", "reason": "2〜3文で" }}
+  }},
+  "price_strategy": {{
+    "entry":       {{ "value": "具体的な価格帯（例：2450〜2500円）", "reason": "3〜4文で" }},
+    "stop_loss":   {{ "value": 損切り価格(数値), "reason": "3〜4文で" }},
+    "take_profit": {{ "value": 利確価格(数値), "reason": "3〜4文で" }}
+  }},
+  "risk_factors":        ["リスク1（2文以上）", "リスク2（2文以上）", "リスク3（2文以上）"],
+  "opportunity_factors": ["好材料1（2文以上）", "好材料2（2文以上）", "好材料3（2文以上）"],
+  "summary": "5〜8文で具体的な数値を交えた総合サマリー"
+}}"""
+
+    elif period == "中期":
+        prompt = f"""
+あなたは日本株の中期（1〜3ヶ月）スイングトレード専門アナリストです。
+
+以下のデータを元に{name}（{code}）が今後1〜3ヶ月で「上昇・様子見・下落」のどれになるかを確率ベースで判断してください。
+
+【前提】
+- 短期ノイズよりもトレンド継続性とマクロ環境を重視
+- ファンダメンタルとマクロ要因の影響を重視
+- すべての判断には具体的な数値を引用した理由を付ける（3文以上）
+- 不明なデータは「データなし」と記載
+- 確率の合計は必ず100にすること
+- JSONのみ出力
+
+【トレンド（中期）】
+現在株価：{price}円 / MA25：{ma25}円
+トレンド：{"上昇トレンド" if ma5 and ma25 and float(str(ma5)) > float(str(ma25)) else "下降トレンド" if ma5 and ma25 else "不明"}
+
+【ファンダメンタル】
+PER：{per}倍 / ROE：{roe} / 売上成長率：{revenue_growth} / 配当利回り：{dividend_yield}
+
+【市場環境】
+日経平均トレンド：{nikkei_trend} / VIX：{vix} / 米10年債：{us10y}%
+ドル円：{usd_jpy}円 / 原油：{oil_price}ドル / 金：{gold_price}ドル / S&P500：{us_trend}
+
+【最近のニュース】
+{news_summary}
+
+【参考スコア】{score}点
+
+以下のJSON形式で回答：
+{{
+  "verdict": {{ "value": "up/sideways/down", "reason": "3〜5文で具体的に" }},
+  "probability": {{
+    "up":       {{ "value": 上昇確率(整数), "reason": "3文以上" }},
+    "sideways": {{ "value": 様子見確率(整数), "reason": "3文以上" }},
+    "down":     {{ "value": 下落確率(整数), "reason": "3文以上" }}
+  }},
+  "confidence": {{ "value": "high/medium/low", "reason": "2〜3文で" }},
+  "trend_analysis": {{
+    "strength": {{ "value": "strong/weak/neutral", "reason": "MA・価格トレンドから3文で" }}
+  }},
+  "fundamental_analysis": {{
+    "growth":    {{ "value": "high/medium/low", "reason": "売上成長率・ROEから3文で" }},
+    "valuation": {{ "value": "undervalued/fair/overvalued", "reason": "PER・PBRから3文で" }}
+  }},
+  "macro_analysis": {{
+    "risk_mode":            {{ "value": "risk_on/risk_off/neutral", "reason": "3文で" }},
+    "interest_rate_impact": {{ "value": "positive/negative/neutral", "reason": "2〜3文で" }},
+    "usd_jpy_impact":       {{ "value": "positive/negative/neutral", "reason": "2〜3文で" }}
+  }},
+  "price_outlook": {{
+    "range": {{ "value": "3ヶ月の想定値幅（例：2200〜2800円）", "reason": "3〜4文で" }}
+  }},
+  "risk_factors":        ["リスク1（2文以上）", "リスク2（2文以上）", "リスク3（2文以上）"],
+  "opportunity_factors": ["好材料1（2文以上）", "好材料2（2文以上）", "好材料3（2文以上）"],
+  "summary": "5〜8文で具体的な総合サマリー"
+}}"""
+
+    else:  # 長期
+        prompt = f"""
+あなたは日本株の長期投資（6ヶ月〜数年）専門アナリストです。
+
+以下のデータを元に{name}（{code}）が長期で「上昇・様子見・下落」のどれになるかを確率ベースで判断してください。
+
+【前提】
+- 短期ノイズは無視し、企業の成長性とマクロ環境を最優先
+- ファンダメンタル（成長・収益性・効率性）を重視
+- すべての判断には具体的な数値を引用した理由を付ける（3文以上）
+- 不明なデータは「データなし」と記載
+- 確率の合計は必ず100にすること
+- JSONのみ出力
+
+【企業成長・収益性（最重要）】
+売上成長率：{revenue_growth} / ROE：{roe} / 配当利回り：{dividend_yield}
+
+【バリュエーション】
+PER：{per}倍 / PBR：{pbr}倍
+
+【市場環境】
+日経平均トレンド：{nikkei_trend} / VIX：{vix} / 米10年債：{us10y}%
+ドル円：{usd_jpy}円 / 原油：{oil_price}ドル / 金：{gold_price}ドル / S&P500：{us_trend}
+
+【最近のニュース】
+{news_summary}
+
+【参考スコア】{score}点
+
+以下のJSON形式で回答：
+{{
+  "verdict": {{ "value": "up/sideways/down", "reason": "3〜5文で具体的に" }},
+  "probability": {{
+    "up":       {{ "value": 上昇確率(整数), "reason": "3文以上" }},
+    "sideways": {{ "value": 様子見確率(整数), "reason": "3文以上" }},
+    "down":     {{ "value": 下落確率(整数), "reason": "3文以上" }}
+  }},
+  "confidence": {{ "value": "high/medium/low", "reason": "2〜3文で" }},
+  "fundamental_analysis": {{
+    "growth":       {{ "value": "high/medium/low",          "reason": "売上成長率・ROEから3文で" }},
+    "profitability":{{ "value": "high/medium/low",          "reason": "ROEから3文で" }},
+    "efficiency":   {{ "value": "high/medium/low",          "reason": "ROEから3文で" }}
+  }},
+  "valuation_analysis": {{
+    "level": {{ "value": "undervalued/fair/overvalued", "reason": "PER・PBRから3文で" }}
+  }},
+  "macro_analysis": {{
+    "risk_mode":            {{ "value": "risk_on/risk_off/neutral", "reason": "3文で" }},
+    "interest_rate_impact": {{ "value": "positive/negative/neutral", "reason": "2〜3文で" }},
+    "usd_jpy_impact":       {{ "value": "positive/negative/neutral", "reason": "2〜3文で" }}
+  }},
+  "price_outlook": {{
+    "target_trend": {{ "value": "uptrend/sideways/downtrend", "reason": "3〜4文で長期的な方向性を" }}
+  }},
+  "long_term_risk": {{ "value": "high/medium/low", "reason": "長期リスクを3文で" }},
+  "risk_factors":        ["リスク1（2文以上）", "リスク2（2文以上）", "リスク3（2文以上）"],
+  "opportunity_factors": ["好材料1（2文以上）", "好材料2（2文以上）", "好材料3（2文以上）"],
+  "summary": "5〜8文で長期投資家向けの総合サマリー"
+}}"""
+
+    try:
+        res = openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "あなたは日本株専門アナリストです。必ずJSON形式のみで返してください。理由は具体的かつ詳細に記述してください。"},
+                {"role": "user",   "content": prompt}
+            ],
+            max_tokens=2000,
+        )
+        raw = res.choices[0].message.content.strip()
+        raw = raw.replace("```json", "").replace("```", "").strip()
+        result = json.loads(raw)
+        result["_period"] = period  # 期間情報も返す
+        return result
+    except Exception as e:
+        return {"error": str(e)}

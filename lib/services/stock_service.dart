@@ -254,4 +254,42 @@ class StockService {
       return {"jp": [], "us": []};
     }
   }
+
+  static Future<Map<String, dynamic>> runSwingAnalysis({
+    required String code,
+    required String name,
+    required Map<String, dynamic> detail,
+    required Map<String, dynamic> lastCandle,
+    required Map<String, bool> checks,
+    String period = '短期',
+  }) async {
+    try {
+      final res = await http.post(
+        Uri.parse("${Constants.backendUrl}/stock/swing_analysis"),
+        headers: {"Content-Type": "application/json"},
+        body: jsonEncode({
+          "code": code,
+          "name": name,
+          "period": period,
+          "price": detail['price'],
+          "rsi": lastCandle['rsi'],
+          "macd": lastCandle['macd'],
+          "ma5": detail['candles']?.last?['ma5'],
+          "ma25": detail['candles']?.last?['ma25'],
+          "bb_upper": lastCandle['bb_upper'],
+          "bb_mid": lastCandle['bb_middle'],
+          "bb_lower": lastCandle['bb_lower'],
+          "per": detail['per'],
+          "pbr": detail['pbr'],
+          "roe": detail['roe'],
+          "revenue_growth": detail['revenue_growth'],
+          "news": detail['news'] ?? [],
+          "checks": checks,
+        }),
+      );
+      return jsonDecode(res.body) as Map<String, dynamic>;
+    } catch (e) {
+      return {"error": e.toString()};
+    }
+  }
 }
