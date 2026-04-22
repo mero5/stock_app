@@ -1572,6 +1572,18 @@ class _DetailScreenState extends State<DetailScreen> {
             ],
           ),
         ),
+        // ── デバッグ：渡したデータ確認ボタン ──
+        const SizedBox(height: 8),
+        OutlinedButton.icon(
+          onPressed: () => _showPromptSheet(_aiResult!),
+          icon: const Icon(Icons.code, size: 16),
+          label: const Text('AIに渡したデータを確認', style: TextStyle(fontSize: 12)),
+          style: OutlinedButton.styleFrom(
+            foregroundColor: Colors.grey,
+            side: const BorderSide(color: Colors.grey),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          ),
+        ),
       ],
     );
   }
@@ -2868,6 +2880,181 @@ class _DetailScreenState extends State<DetailScreen> {
           ),
         ),
       ),
+    );
+  }
+
+  void _showPromptSheet(Map<String, dynamic> result) {
+    final prompt = result['_prompt'] as String? ?? 'プロンプト未取得';
+    final tech = result['_tech_data'] as Map? ?? {};
+    final fund = result['_fund_data'] as Map? ?? {};
+    final macro = result['_macro_data'] as Map? ?? {};
+    final breadth = result['_breadth_data'] as Map? ?? {};
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (_) => DraggableScrollableSheet(
+        initialChildSize: 0.85,
+        maxChildSize: 0.95,
+        minChildSize: 0.5,
+        expand: false,
+        builder: (_, scrollController) => DefaultTabController(
+          length: 2,
+          child: Column(
+            children: [
+              // ハンドル
+              Padding(
+                padding: const EdgeInsets.only(top: 12, bottom: 4),
+                child: Center(
+                  child: Container(
+                    width: 40,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade300,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+              ),
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+                child: Row(
+                  children: [
+                    Icon(Icons.code, color: Colors.blue),
+                    SizedBox(width: 8),
+                    Text(
+                      'AIに渡したデータ',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const TabBar(
+                tabs: [
+                  Tab(text: '📊 データ一覧'),
+                  Tab(text: '📝 プロンプト全文'),
+                ],
+                labelColor: Colors.blue,
+                unselectedLabelColor: Colors.grey,
+                indicatorColor: Colors.blue,
+              ),
+              Expanded(
+                child: TabBarView(
+                  children: [
+                    // タブ①：データ一覧
+                    SingleChildScrollView(
+                      controller: scrollController,
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _dataSection('📈 テクニカル', tech),
+                          const SizedBox(height: 12),
+                          _dataSection('💰 ファンダメンタル', fund),
+                          const SizedBox(height: 12),
+                          _dataSection('🌍 マクロ', macro),
+                          const SizedBox(height: 12),
+                          _dataSection('📊 市場内部', breadth),
+                        ],
+                      ),
+                    ),
+                    // タブ②：プロンプト全文
+                    SingleChildScrollView(
+                      controller: scrollController,
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: Colors.grey.shade50,
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(color: Colors.grey.shade300),
+                            ),
+                            child: SelectableText(
+                              prompt,
+                              style: const TextStyle(
+                                fontSize: 11,
+                                color: Colors.black87,
+                                height: 1.6,
+                                fontFamily: 'monospace',
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _dataSection(String title, Map data) {
+    if (data.isEmpty) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+          ),
+          const SizedBox(height: 4),
+          const Text(
+            'データなし',
+            style: TextStyle(color: Colors.grey, fontSize: 12),
+          ),
+        ],
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          title,
+          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+        ),
+        const SizedBox(height: 6),
+        ...data.entries.where((e) => !e.key.startsWith('_')).map((e) {
+          final val = e.value;
+          final displayVal = val == null ? '❌ データなし' : '✅ $val';
+          final color = val == null
+              ? Colors.red.shade300
+              : Colors.green.shade700;
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 3),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SizedBox(
+                  width: 140,
+                  child: Text(
+                    e.key,
+                    style: const TextStyle(fontSize: 11, color: Colors.black54),
+                  ),
+                ),
+                Expanded(
+                  child: Text(
+                    displayVal,
+                    style: TextStyle(fontSize: 11, color: color),
+                  ),
+                ),
+              ],
+            ),
+          );
+        }),
+      ],
     );
   }
 
