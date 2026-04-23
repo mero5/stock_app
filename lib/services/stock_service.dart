@@ -243,18 +243,6 @@ class StockService {
     }
   }
 
-  static Future<Map<String, dynamic>> getSectorTrends() async {
-    try {
-      final res = await http.get(
-        Uri.parse("${Constants.backendUrl}/market/sectors"),
-      );
-      return jsonDecode(res.body) as Map<String, dynamic>;
-    } catch (e) {
-      print('セクター取得エラー: $e');
-      return {"jp": [], "us": []};
-    }
-  }
-
   static Future<Map<String, dynamic>> runSwingAnalysis({
     required String code,
     required String name,
@@ -290,6 +278,33 @@ class StockService {
       return jsonDecode(res.body) as Map<String, dynamic>;
     } catch (e) {
       return {"error": e.toString()};
+    }
+  }
+
+  static Future<Map<String, dynamic>> getSectorTrends({
+    String period = '5d',
+  }) async {
+    try {
+      final res = await http.get(
+        Uri.parse("${Constants.backendUrl}/market/sectors?period=$period"),
+      );
+      return jsonDecode(res.body) as Map<String, dynamic>;
+    } catch (e) {
+      return {"jp": [], "us": []};
+    }
+  }
+
+  static Future<String> getSectorComment(Map<String, dynamic> sectors) async {
+    try {
+      final res = await http.post(
+        Uri.parse("${Constants.backendUrl}/market/sector_comment"),
+        headers: {"Content-Type": "application/json"},
+        body: jsonEncode(sectors),
+      );
+      final data = jsonDecode(res.body);
+      return data['comment'] ?? '';
+    } catch (e) {
+      return '';
     }
   }
 }

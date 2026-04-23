@@ -16,6 +16,11 @@ import os
 import json
 import pandas as pd
 import numpy as np
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
+import boto3
+from decimal import Decimal
+from datetime import datetime, timedelta
 
 # ===================================================
 # APIキー設定
@@ -44,6 +49,63 @@ def clean_value(v):
     if isinstance(v, float) and math.isnan(v):
         return None
     return v
+
+# ===================================================
+# DynamoDBキャッシュ
+# ===================================================
+
+dynamodb = boto3.resource('dynamodb', region_name='ap-northeast-1')
+market_cache_table = dynamodb.Table('market_cache')
+stock_cache_table  = dynamodb.Table('stock_cache')
+
+def _to_decimal(obj):
+    """float → Decimal変換（DynamoDB保存用）"""
+    if isinstance(obj, float):
+        return Decimal(str(obj))
+    if isinstance(obj, dict):
+        return {k: _to_decimal(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_to_decimal(i) for i in obj]
+    return obj
+
+def _from_decimal(obj):
+    """Decimal → float変換（レスポンス用）"""
+    if isinstance(obj, Decimal):
+        return float(obj)
+    if isinstance(obj, dict):
+        return {k: _from_decimal(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_from_decimal(i) for i in obj]
+    return obj
+
+def cache_get(table, key: dict) -> dict | None:
+    """DynamoDBキャッシュ取得。期限切れ・未存在はNoneを返す"""
+    try:
+        res  = table.get_item(Key=key)
+        item = res.get('Item')
+        if not item:
+            return None
+        expires_at = item.get('expires_at')
+        if expires_at and datetime.fromisoformat(str(expires_at)) < datetime.now():
+            return None  # TTL切れ
+        return _from_decimal({k: v for k, v in item.items()
+                               if k not in ('expires_at', 'updated_at')})
+    except Exception as e:
+        print(f"キャッシュ取得エラー: {e}")
+        return None
+
+def cache_set(table, key: dict, data: dict, ttl_minutes: int = 60):
+    """DynamoDBにキャッシュ保存"""
+    try:
+        item = {
+            **key,
+            **data,
+            'updated_at': datetime.now().isoformat(),
+            'expires_at': (datetime.now() + timedelta(minutes=ttl_minutes)).isoformat(),
+        }
+        table.put_item(Item=_to_decimal(item))
+    except Exception as e:
+        print(f"キャッシュ保存エラー: {e}")
 
 # ===================================================
 # FastAPIアプリ初期化
@@ -278,6 +340,20 @@ def get_stock_detail(code: str):
         else:
             change = None
             change_pct = None
+        
+        # ニュース取得
+        try:
+            news_raw = ticker.news or []
+            news = []
+            for n in news_raw[:5]:
+                content = n.get("content", {})
+                if not isinstance(content, dict):
+                    continue
+                title = content.get("title", "")
+                if title:
+                    news.append({"title": title})
+        except:
+            news = []
 
         return {
             "code": code,
@@ -294,6 +370,7 @@ def get_stock_detail(code: str):
             "roa": clean_value(info.get("returnOnAssets")),
             "revenue_growth": clean_value(info.get("revenueGrowth")),
             "debt_to_equity": clean_value(info.get("debtToEquity")),
+            "news": news,
             "candles": [
                 {k: clean_value(v) for k, v in c.items()}
                 for c in candles
@@ -1075,7 +1152,7 @@ PER: {per}倍 / PBR: {pbr}倍 / ROE: {roe}
 # ===================================================
 
 @app.get("/market/sectors")
-def get_sector_trends():
+def get_sector_trends(period: str = "5d"):
     """
     日本・米国の主要セクターETFの騰落を取得して返す
     """
@@ -1083,14 +1160,23 @@ def get_sector_trends():
 
     # 日本セクターETF（東証ETF）
     jp_sectors = {
-        "銀行":     "1615.T",
-        "電気機器": "1617.T",
-        "自動車":   "1622.T",
-        "不動産":   "1621.T",
-        "食品":     "1619.T",
-        "医薬品":   "1620.T",
-        "情報通信": "1618.T",
-        "素材":     "1623.T",
+        "銀行":       "1615.T",
+        "電気機器":   "1617.T",
+        "自動車":     "1622.T",
+        "不動産":     "1621.T",
+        "食品":       "1619.T",
+        "医薬品":     "1620.T",
+        "情報通信":   "1618.T",
+        "素材":       "1623.T",
+        "鉄鋼・非鉄": "1629.T",
+        "化学":       "1624.T",
+        "機械":       "1625.T",
+        "小売":       "1626.T",
+        "サービス":   "1627.T",
+        "海運・空運": "1628.T",
+        "鉱業":       "1630.T",
+        "建設":       "1631.T",
+        "水産・農林": "1633.T",
     }
 
     # 米国セクターETF（SPDR）
@@ -1114,7 +1200,7 @@ def get_sector_trends():
     for name, ticker_code in {**jp_sectors, **us_sectors}.items():
         try:
             ticker = yf.Ticker(ticker_code)
-            hist = ticker.history(period="6d")
+            hist = ticker.history(period="1mo" if period == "1mo" else "6d")
             if len(hist) < 2:
                 continue
             prev  = float(hist["Close"].iloc[-2])
@@ -1132,6 +1218,9 @@ def get_sector_trends():
                 "ticker":     ticker_code,
                 "change_pct": change_pct,
                 "trend_5d":   trend_5d,
+                "trend": round(
+                    (close - float(hist["Close"].iloc[0])) / float(hist["Close"].iloc[0]) * 100, 2
+                ) if len(hist) >= 2 else change_pct,
             }
 
             if ticker_code in us_sectors.values():
@@ -1200,9 +1289,15 @@ def get_trend_label(ticker_code: str, period: str = "5d") -> str:
 
 def get_macro_data() -> dict:
     """
-    マクロ指標を一括取得
-    将来的にDynamoDBキャッシュに差し替え可能
+    マクロ指標を一括取得（DynamoDBに15分キャッシュ）
     """
+    # キャッシュ確認
+    cached = cache_get(market_cache_table, {'cache_key': 'macro'})
+    if cached:
+        print("マクロ: キャッシュヒット")
+        return cached
+
+    print("マクロ: yfinanceから取得")
     macro = {
         "vix":          get_latest_price("^VIX"),
         "us10y":        get_latest_price("^TNX"),
@@ -1221,15 +1316,23 @@ def get_macro_data() -> dict:
     else:
         macro["yield_spread"] = None
 
+    # 15分キャッシュ
+    cache_set(market_cache_table, {'cache_key': 'macro'}, macro, ttl_minutes=15)
     return macro
 
 
 def get_nikkei225_breadth() -> dict:
     """
-    日経225の騰落レシオ・上昇下落銘柄数を計算
-    将来的にDynamoDBキャッシュに差し替え可能
+    日経225の騰落レシオ・上昇下落銘柄数を計算（DynamoDBに8時間キャッシュ）
     """
-    # 日経225構成銘柄（主要50銘柄で簡易計算）
+    # キャッシュ確認
+    cached = cache_get(market_cache_table, {'cache_key': 'breadth'})
+    if cached:
+        print("騰落レシオ: キャッシュヒット")
+        return cached
+
+    print("騰落レシオ: yfinanceから計算（30銘柄）")
+    # 日経225構成銘柄（主要30銘柄で簡易計算）
     nikkei_sample = [
         "7203.T", "6758.T", "9984.T", "8306.T", "6861.T",
         "9432.T", "7974.T", "6367.T", "4063.T", "8316.T",
@@ -1245,11 +1348,14 @@ def get_nikkei225_breadth() -> dict:
         advancers = int((change > 0).sum())
         decliners = int((change < 0).sum())
         ratio = round(advancers / decliners, 2) if decliners > 0 else None
-        return {
+        result = {
             "advancers": advancers,
             "decliners": decliners,
             "advance_decline_ratio": ratio,
         }
+        # 8時間キャッシュ（翌営業日まで有効）
+        cache_set(market_cache_table, {'cache_key': 'breadth'}, result, ttl_minutes=480)
+        return result
     except:
         return {
             "advancers": None,
@@ -1260,9 +1366,15 @@ def get_nikkei225_breadth() -> dict:
 
 def get_technical_data(ticker_code: str) -> dict:
     """
-    テクニカル指標を計算して返す
-    将来的にDynamoDBキャッシュに差し替え可能
+    テクニカル指標を計算して返す（DynamoDBに4時間キャッシュ）
     """
+    # キャッシュ確認
+    cached = cache_get(stock_cache_table, {'code': ticker_code, 'cache_type': 'technical'})
+    if cached:
+        print(f"テクニカル {ticker_code}: キャッシュヒット")
+        return cached
+
+    print(f"テクニカル {ticker_code}: yfinanceから計算")
     try:
         t = yf.Ticker(ticker_code)
         hist = t.history(period="6mo")
@@ -1352,7 +1464,7 @@ def get_technical_data(ticker_code: str) -> dict:
         momentum_3m  = safe_float((close.iloc[-1] / close.iloc[-63] - 1) * 100) if len(close) >= 63  else None
         momentum_6m  = safe_float((close.iloc[-1] / close.iloc[-126] - 1) * 100) if len(close) >= 126 else None
 
-        return {
+        result = {
             "price":          current,
             "ma5":            ma5,
             "ma25":           ma25,
@@ -1376,6 +1488,11 @@ def get_technical_data(ticker_code: str) -> dict:
             "momentum_3m":    momentum_3m,
             "momentum_6m":    momentum_6m,
         }
+        # 4時間キャッシュ
+        cache_set(stock_cache_table,
+                  {'code': ticker_code, 'cache_type': 'technical'},
+                  result, ttl_minutes=240)
+        return result
     except Exception as e:
         print(f"テクニカル計算エラー: {e}")
         return {}
@@ -1383,13 +1500,19 @@ def get_technical_data(ticker_code: str) -> dict:
 
 def get_fundamental_data(ticker_code: str) -> dict:
     """
-    ファンダメンタル指標を取得
-    将来的にDynamoDBキャッシュに差し替え可能
+    ファンダメンタル指標を取得（DynamoDBに24時間キャッシュ）
     """
+    # キャッシュ確認
+    cached = cache_get(stock_cache_table, {'code': ticker_code, 'cache_type': 'fundamental'})
+    if cached:
+        print(f"ファンダ {ticker_code}: キャッシュヒット")
+        return cached
+
+    print(f"ファンダ {ticker_code}: yfinanceから取得")
     try:
         t    = yf.Ticker(ticker_code)
         info = t.info
-        return {
+        result = {
             "per":             safe_float(info.get("trailingPE")),
             "pbr":             safe_float(info.get("priceToBook")),
             "roe":             safe_float(info.get("returnOnEquity",  0) * 100) if info.get("returnOnEquity")  else None,
@@ -1404,6 +1527,11 @@ def get_fundamental_data(ticker_code: str) -> dict:
             "target_price":    safe_float(info.get("targetMeanPrice")),
             "analyst_rating":  info.get("recommendationKey"),
         }
+        # 24時間キャッシュ（ファンダは変化が少ない）
+        cache_set(stock_cache_table,
+                  {'code': ticker_code, 'cache_type': 'fundamental'},
+                  result, ttl_minutes=1440)
+        return result
     except Exception as e:
         print(f"ファンダ取得エラー: {e}")
         return {}
@@ -1828,7 +1956,9 @@ def build_long_prompt(name, code, tech, fund, macro,
 async def swing_analysis(request: Request):
     """
     AI診断（短期・中期・長期）
-    既存の /stock/swing_analysis を置き換え
+    - tech/fund/macro/breadth を ThreadPoolExecutor で並列取得
+    - DynamoDBキャッシュ対応済み
+    - エラーメッセージを日本語化
     """
     body = await request.json()
 
@@ -1837,10 +1967,10 @@ async def swing_analysis(request: Request):
     name   = body.get("name", "")
     period = body.get("period", "短期")  # 短期 / 中期 / 長期
 
-    # ユーザープロファイル（初回診断から渡す）
+    # ユーザープロファイル
     user_profile = {
-        "risk_level":     body.get("risk_level", "中"),      # 高 / 中 / 低
-        "analysis_style": body.get("analysis_style", "バランス型"),  # テクニカル重視 / ファンダ重視 / バランス型
+        "risk_level":     body.get("risk_level", "中"),
+        "analysis_style": body.get("analysis_style", "バランス型"),
     }
 
     # ニュース
@@ -1850,22 +1980,26 @@ async def swing_analysis(request: Request):
         for n in news_list[:5] if n.get("title")
     ]) or "なし"
 
-    # 決算日（既存スケジュール機能から渡す）
-    earnings_date_str     = body.get("earnings_date", "")
-    dividend_record_date  = body.get("dividend_record_date", "")
-    score                 = body.get("score")
+    # 決算日
+    earnings_date_str    = body.get("earnings_date", "")
+    dividend_record_date = body.get("dividend_record_date", "")
+    score                = body.get("score")
 
-    # ── データ取得 ──
-    # 日本株：ticker_code = "7203.T" 形式で渡す
-    # 米国株：ticker_code = "AAPL" 形式で渡す
+    # ticker_code 正規化
     ticker_code = body.get("ticker_code") or (
         f"{code}.T" if len(code) == 4 and code.isdigit() else code
     )
 
-    tech     = get_technical_data(ticker_code)
-    fund     = get_fundamental_data(ticker_code)
-    macro    = get_macro_data()
-    breadth  = get_nikkei225_breadth()
+    # ── データ取得（4関数を並列実行）──
+    loop = asyncio.get_event_loop()
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        tech_f    = loop.run_in_executor(executor, get_technical_data,   ticker_code)
+        fund_f    = loop.run_in_executor(executor, get_fundamental_data, ticker_code)
+        macro_f   = loop.run_in_executor(executor, get_macro_data)
+        breadth_f = loop.run_in_executor(executor, get_nikkei225_breadth)
+        tech, fund, macro, breadth = await asyncio.gather(
+            tech_f, fund_f, macro_f, breadth_f
+        )
 
     # 信用残・空売り（フロントから渡すか、後でバッチ化）
     macro["margin_ratio"] = body.get("margin_ratio")
@@ -1892,6 +2026,7 @@ async def swing_analysis(request: Request):
         )
 
     # ── AI呼び出し ──
+    raw = ""
     try:
         res = openai_client.chat.completions.create(
             model="gpt-4o-mini",
@@ -1910,19 +2045,47 @@ async def swing_analysis(request: Request):
         raw    = res.choices[0].message.content.strip()
         raw    = raw.replace("```json", "").replace("```", "").strip()
         result = json.loads(raw)
-        result["_period"]    = period
-        result["_ticker"]    = ticker_code
-        result["_prompt"]    = prompt         
-        result["_tech_data"] = tech           
-        result["_fund_data"] = fund           
-        result["_macro_data"] = macro         
+        result["_period"]       = period
+        result["_ticker"]       = ticker_code
+        result["_prompt"]       = prompt
+        result["_tech_data"]    = tech
+        result["_fund_data"]    = fund
+        result["_macro_data"]   = macro
         result["_breadth_data"] = breadth
         return result
 
     except json.JSONDecodeError as e:
-        return {"error": f"JSONパースエラー: {str(e)}", "raw": raw}
+        return {
+            "error": "AI分析結果の解析に失敗しました。もう一度お試しください。",
+            "error_detail": f"JSONパースエラー: {str(e)}",
+            "error_type": "parse_error",
+            "raw": raw,
+        }
     except Exception as e:
-        return {"error": str(e)}
+        err_str = str(e).lower()
+        if "rate limit" in err_str or "ratelimit" in err_str:
+            msg = "AI分析の利用制限に達しました。しばらく待ってからもう一度お試しください。"
+            etype = "rate_limit"
+        elif "timeout" in err_str:
+            msg = "AI分析がタイムアウトしました。サーバーが混雑しています。時間をおいて再度お試しください。"
+            etype = "timeout"
+        elif "connection" in err_str or "network" in err_str:
+            msg = "AIサーバーに接続できませんでした。ネットワーク状況を確認してください。"
+            etype = "connection"
+        elif "yfinance" in err_str or "download" in err_str:
+            msg = "株価データの取得に失敗しました。銘柄コードを確認してください。"
+            etype = "data_fetch"
+        elif "dynamodb" in err_str or "no region" in err_str:
+            msg = "データベースへの接続に失敗しました。管理者にお問い合わせください。"
+            etype = "database"
+        else:
+            msg = "予期せぬエラーが発生しました。しばらく待ってからもう一度お試しください。"
+            etype = "unknown"
+        return {
+            "error": msg,
+            "error_type": etype,
+            "error_detail": str(e),
+        }
 
 
 @app.get("/market/breadth")
@@ -1931,3 +2094,37 @@ def get_market_breadth():
     # 今は get_nikkei225_breadth() で計算
     # 将来的にDynamoDBから取得
     return get_nikkei225_breadth()
+
+
+@app.post("/market/sector_comment")
+async def sector_comment(request: Request):
+    body = await request.json()
+    jp = body.get("jp", [])
+    us = body.get("us", [])
+
+    jp_text = "\n".join([f"{s['name']}: {s['change_pct']:+.2f}%" for s in jp])
+    us_text = "\n".join([f"{s['name']}: {s['change_pct']:+.2f}%" for s in us])
+
+    prompt = f"""
+以下は本日の日本株・米国株のセクター騰落率です。
+これを見て今の相場環境を2〜3文で日本語で解説してください。
+どのセクターが強く・弱く、それが何を意味するか（リスクオン/オフ、金利動向など）を簡潔に説明してください。
+
+【日本株セクター】
+{jp_text}
+
+【米国株セクター】
+{us_text}
+"""
+    try:
+        res = openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "あなたは株式市場のアナリストです。簡潔に日本語で答えてください。"},
+                {"role": "user", "content": prompt}
+            ],
+            max_tokens=300,
+        )
+        return {"comment": res.choices[0].message.content.strip()}
+    except Exception as e:
+        return {"comment": "解説を取得できませんでした。"}

@@ -1670,11 +1670,11 @@ class _DetailScreenState extends State<DetailScreen> {
     final reason = data['reason'] as String? ?? '';
 
     final colorMap = {
-      'risk_on': Colors.green,
-      'risk_off': Colors.red,
+      'risk_on': Colors.red,
+      'risk_off': Colors.green,
       'neutral': Colors.grey,
-      'positive': Colors.green,
-      'negative': Colors.red,
+      'positive': Colors.red,
+      'negative': Colors.green,
       'strong': Colors.red,
       'weak': Colors.green,
       'high': Colors.red,
@@ -1869,7 +1869,7 @@ class _DetailScreenState extends State<DetailScreen> {
 
     final candleList = data.map((c) {
       return Candle(
-        date: DateTime.parse(c['date']),
+        date: DateTime.parse(c['date'] + 'T09:00:00'),
         open: (c['open'] as num?)?.toDouble() ?? 0.0,
         high: (c['high'] as num?)?.toDouble() ?? 0.0,
         low: (c['low'] as num?)?.toDouble() ?? 0.0,
@@ -2451,26 +2451,32 @@ class _DetailScreenState extends State<DetailScreen> {
                   _getInfoText('risk_factors'),
                 ),
                 const SizedBox(height: 8),
-                ...(r['risk_factors'] as List? ?? []).map(
-                  (rf) => Padding(
-                    padding: const EdgeInsets.only(bottom: 6),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text(
-                          '・',
-                          style: TextStyle(color: Colors.red, fontSize: 12),
+                ...(r['negative_points'] as List? ??
+                        r['risk_factors'] as List? ??
+                        [])
+                    .map(
+                      (rf) => Padding(
+                        padding: const EdgeInsets.only(bottom: 6),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              '・',
+                              style: TextStyle(color: Colors.red, fontSize: 12),
+                            ),
+                            Expanded(
+                              child: Text(
+                                rf.toString(),
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  height: 1.5,
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
-                        Expanded(
-                          child: Text(
-                            rf.toString(),
-                            style: const TextStyle(fontSize: 12, height: 1.5),
-                          ),
-                        ),
-                      ],
+                      ),
                     ),
-                  ),
-                ),
               ],
             ),
           ),
@@ -2491,26 +2497,35 @@ class _DetailScreenState extends State<DetailScreen> {
                   _getInfoText('risk_factors'),
                 ),
                 const SizedBox(height: 8),
-                ...(r['opportunity_factors'] as List? ?? []).map(
-                  (of) => Padding(
-                    padding: const EdgeInsets.only(bottom: 6),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text(
-                          '・',
-                          style: TextStyle(color: Colors.green, fontSize: 12),
+                ...(r['positive_points'] as List? ??
+                        r['opportunity_factors'] as List? ??
+                        [])
+                    .map(
+                      (of) => Padding(
+                        padding: const EdgeInsets.only(bottom: 6),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              '・',
+                              style: TextStyle(
+                                color: Colors.green,
+                                fontSize: 12,
+                              ),
+                            ),
+                            Expanded(
+                              child: Text(
+                                of.toString(),
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  height: 1.5,
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
-                        Expanded(
-                          child: Text(
-                            of.toString(),
-                            style: const TextStyle(fontSize: 12, height: 1.5),
-                          ),
-                        ),
-                      ],
+                      ),
                     ),
-                  ),
-                ),
               ],
             ),
           ),
@@ -3002,6 +3017,65 @@ class _DetailScreenState extends State<DetailScreen> {
   }
 
   Widget _dataSection(String title, Map data) {
+    // キー名の日本語変換マップ
+    final keyLabels = {
+      // テクニカル
+      'price': '現在株価',
+      'ma5': '移動平均 MA5',
+      'ma25': '移動平均 MA25',
+      'ma75': '移動平均 MA75',
+      'rsi': 'RSI（14日）',
+      'macd': 'MACD',
+      'macd_signal': 'MACDシグナル',
+      'macd_hist': 'MACDヒストグラム',
+      'bb_upper': 'ボリンジャー上限',
+      'bb_mid': 'ボリンジャー中央',
+      'bb_lower': 'ボリンジャー下限',
+      'atr': 'ATR（14日）',
+      'volume_ratio': '出来高比（20日平均比）',
+      'obv': 'OBV',
+      'stoch_k': 'ストキャスティクス %K',
+      'adx': 'ADX（トレンド強度）',
+      'week52_high': '52週高値',
+      'week52_low': '52週安値',
+      'range_position': '52週レンジ位置 %',
+      'momentum_1m': 'モメンタム（1ヶ月）',
+      'momentum_3m': 'モメンタム（3ヶ月）',
+      'momentum_6m': 'モメンタム（6ヶ月）',
+      // ファンダメンタル
+      'per': 'PER（株価収益率）',
+      'pbr': 'PBR（株価純資産倍率）',
+      'roe': 'ROE（自己資本利益率）',
+      'roa': 'ROA（総資産利益率）',
+      'revenue_growth': '売上成長率',
+      'eps_growth': 'EPS成長率',
+      'operating_margin': '営業利益率',
+      'debt_ratio': '負債比率（D/Eレシオ）',
+      'equity_ratio': '株主資本（BPS）',
+      'dividend_yield': '配当利回り',
+      'fcf': 'フリーキャッシュフロー',
+      'target_price': 'アナリスト目標株価',
+      'analyst_rating': 'アナリスト評価',
+      // マクロ
+      'vix': 'VIX（恐怖指数）',
+      'us10y': '米10年債利回り',
+      'us2y': '米2年債利回り',
+      'usd_jpy': 'ドル円',
+      'dxy': 'ドル指数（DXY）',
+      'oil_price': '原油（WTI）',
+      'gold_price': '金（Gold）',
+      'nikkei_trend': '日経平均トレンド',
+      'sp500_trend': 'S&P500トレンド',
+      'yield_spread': '金利差（10年−2年）',
+      'margin_ratio': '信用倍率',
+      'short_ratio': '空売り比率',
+      // 騰落レシオ
+      'advancers': '上昇銘柄数',
+      'decliners': '下落銘柄数',
+      'advance_decline_ratio': '騰落レシオ',
+      'cache_key': 'キャッシュキー',
+    };
+
     if (data.isEmpty) {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -3026,34 +3100,58 @@ class _DetailScreenState extends State<DetailScreen> {
           style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
         ),
         const SizedBox(height: 6),
-        ...data.entries.where((e) => !e.key.startsWith('_')).map((e) {
-          final val = e.value;
-          final displayVal = val == null ? '❌ データなし' : '✅ $val';
-          final color = val == null
-              ? Colors.red.shade300
-              : Colors.green.shade700;
-          return Padding(
-            padding: const EdgeInsets.only(bottom: 3),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                SizedBox(
-                  width: 140,
-                  child: Text(
-                    e.key,
-                    style: const TextStyle(fontSize: 11, color: Colors.black54),
-                  ),
-                ),
-                Expanded(
-                  child: Text(
-                    displayVal,
-                    style: TextStyle(fontSize: 11, color: color),
-                  ),
-                ),
-              ],
-            ),
-          );
-        }),
+        Container(
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            color: Colors.grey.shade50,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: Colors.grey.shade200),
+          ),
+          child: Column(
+            children: data.entries
+                .where((e) => !e.key.startsWith('_') && e.key != 'cache_key')
+                .map((e) {
+                  final val = e.value;
+                  final label = keyLabels[e.key] ?? e.key;
+                  final isNull = val == null;
+                  final dispVal = isNull ? '❌ 未取得' : '✅ $val';
+                  final color = isNull
+                      ? Colors.red.shade400
+                      : Colors.green.shade700;
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 4),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        SizedBox(
+                          width: 165,
+                          child: Text(
+                            label,
+                            style: const TextStyle(
+                              fontSize: 11,
+                              color: Colors.black54,
+                            ),
+                          ),
+                        ),
+                        Expanded(
+                          child: Text(
+                            dispVal,
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: color,
+                              fontWeight: isNull
+                                  ? FontWeight.normal
+                                  : FontWeight.w500,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                })
+                .toList(),
+          ),
+        ),
       ],
     );
   }
