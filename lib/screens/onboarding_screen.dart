@@ -48,6 +48,18 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
       description: '日本・米国の主要セクターの\n騰落状況をリアルタイムで確認。',
       highlights: ['AIセクター・金融・エネルギーなど', '本日の上昇・下落セクターを表示', '5日間のトレンドも確認可能'],
     ),
+    _OnboardingPage(
+      icon: Icons.pie_chart,
+      color: Colors.indigo,
+      title: 'ポートフォリオ診断',
+      description: '保有銘柄を入力するだけで\nAIがポートフォリオ全体を一括診断します。',
+      highlights: [
+        '取得単価・保有株数を入力して損益を表示',
+        '継続保有・買い増し・利確・損切りを確率で判断',
+        '利確目安・損切りラインを自動計算',
+        '入力情報はサーバーに保存されません',
+      ],
+    ),
   ];
 
   @override

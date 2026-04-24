@@ -10,6 +10,8 @@ import 'detail_screen.dart';
 import 'youtube_screen.dart';
 import 'schedule_screen.dart';
 import 'market_screen.dart';
+import 'settings_screen.dart';
+import 'portfolio_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -23,6 +25,7 @@ class _HomeScreenState extends State<HomeScreen> {
   List<Stock> watchList = [];
   bool _editMode = false;
   List<String> _selectedCodes = [];
+  bool _isLoading = true;
 
   @override
   void initState() {
@@ -31,6 +34,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> loadFavorites() async {
+    setState(() => _isLoading = true);
     try {
       final codes = await WatchlistService.getCodes();
       final stocks = await Future.wait(
@@ -39,6 +43,8 @@ class _HomeScreenState extends State<HomeScreen> {
       setState(() => watchList = stocks);
     } catch (e) {
       print("お気に入り取得エラー: $e");
+    } finally {
+      setState(() => _isLoading = false);
     }
   }
 
@@ -383,6 +389,9 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildHomeTab() {
+    if (_isLoading) {
+      return const Center(child: CircularProgressIndicator());
+    }
     if (watchList.isEmpty) {
       return const Center(child: Text("銘柄を追加してください"));
     }
@@ -478,12 +487,6 @@ class _HomeScreenState extends State<HomeScreen> {
         actions: [
           // ホームタブのみ表示
           if (_currentIndex == 0) ...[
-            // AI診断ボタン
-            IconButton(
-              icon: const Icon(Icons.auto_awesome),
-              tooltip: 'AI診断',
-              onPressed: _showAiDiagnosis,
-            ),
             // 銘柄追加ボタン
             IconButton(
               icon: const Icon(Icons.add),
@@ -544,6 +547,8 @@ class _HomeScreenState extends State<HomeScreen> {
           const YoutubeScreen(),
           const ScheduleScreen(),
           const MarketScreen(),
+          const SettingsScreen(),
+          const PortfolioScreen(),
         ],
       ),
       bottomNavigationBar: BottomNavigationBar(
@@ -568,6 +573,11 @@ class _HomeScreenState extends State<HomeScreen> {
             label: 'スケジュール',
           ),
           BottomNavigationBarItem(icon: Icon(Icons.bar_chart), label: 'マーケット'),
+          BottomNavigationBarItem(icon: Icon(Icons.settings), label: '設定'),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.pie_chart),
+            label: 'ポートフォリオ',
+          ),
         ],
       ),
     );

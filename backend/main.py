@@ -107,6 +107,8 @@ def cache_set(table, key: dict, data: dict, ttl_minutes: int = 60):
     except Exception as e:
         print(f"キャッシュ保存エラー: {e}")
 
+user_profile_table = dynamodb.Table('user_profiles')
+
 # ===================================================
 # FastAPIアプリ初期化
 # ===================================================
@@ -460,6 +462,15 @@ def search_channels(q: str):
 @app.post("/summarize")
 async def summarize_video(request: Request):
     body = await request.json()
+    video_url = body.get("url", "")
+    
+    # URLをキーにしてキャッシュ確認（7日間）
+    cache_key = f"summary_{video_url.replace('https://www.youtube.com/watch?v=', '')}"
+    cached = cache_get(market_cache_table, {'cache_key': cache_key})
+    if cached:
+        print(f"要約キャッシュヒット: {cache_key}")
+        return cached
+    
     title = body.get("title", "")
     url = body.get("url", "")
     transcript = body.get("transcript", "")
@@ -473,7 +484,7 @@ async def summarize_video(request: Request):
 
 以下のJSON形式で回答してください：
 {{
-"summary": "動画の内容を2〜3文で要約",
+"summary": "以下の項目で箇条書きにして記述（日本語）。各項目は「・」で始めること。\n・全体の結論\n・相場観・市場の見方\n・注目銘柄・セクター\n・根拠・理由\n・視聴者へのアドバイス",
 "nikkei_outlook": "bullish" か "bearish" か "neutral" か "not_mentioned" のいずれか,
 "nikkei_reason": "日経平均についての根拠（not_mentionedの場合は空文字）",
 "us_market_outlook": "bullish" か "bearish" か "neutral" か "not_mentioned" のいずれか,
@@ -494,6 +505,11 @@ async def summarize_video(request: Request):
         raw = raw.replace("```json", "").replace("```", "").strip()
         parsed = json.loads(raw)
         return parsed
+
+        # 7日間キャッシュ保存
+        cache_set(market_cache_table, {'cache_key': cache_key}, parsed, ttl_minutes=10080)
+        return parsed
+
     except Exception as e:
         return {
             "summary": "要約できませんでした",
@@ -519,36 +535,31 @@ def get_summaries(channel_ids: str):
 
 
 
-@app.get("/channels/{channel_id}/latest_video")
-def get_latest_video(channel_id: str):
-    """
-    チャンネルの最新動画のIDとタイトルだけ返す（字幕はFlutter側で取得）
-    """
+@app.get("/channels/{channel_id}/videos")
+def get_channel_videos(channel_id: str, max_results: int = 10):
+    """チャンネルの最新動画一覧を取得"""
     try:
+        youtube = build("youtube", "v3", developerKey=os.getenv("YOUTUBE_API_KEY"))
         res = youtube.search().list(
             channelId=channel_id,
             part="snippet",
             order="date",
-            maxResults=1,
-            type="video"
+            maxResults=max_results,
+            type="video",
         ).execute()
 
-        items = res.get("items", [])
-        if not items:
-            return {"error": "動画が見つかりません"}
-
-        video = items[0]
-        return {
-            "video_id": video["id"]["videoId"],
-            "title": video["snippet"]["title"],
-            "published_at": video["snippet"]["publishedAt"],
-            "description": video["snippet"]["description"],
-            "thumbnail": video["snippet"]["thumbnails"]["default"]["url"],
-            "url": f"https://www.youtube.com/watch?v={video['id']['videoId']}",
-        }
+        videos = []
+        for item in res.get("items", []):
+            videos.append({
+                "video_id":     item["id"]["videoId"],
+                "title":        item["snippet"]["title"],
+                "published_at": item["snippet"]["publishedAt"],
+                "thumbnail":    item["snippet"]["thumbnails"]["medium"]["url"],
+                "description":  item["snippet"]["description"],
+            })
+        return {"videos": videos}
     except Exception as e:
-        print(f"最新動画取得エラー: {e}")
-        return {"error": str(e)}
+        return {"error": str(e), "videos": []}
 
 # ===================================================
 # 銘柄イベント取得API
@@ -2128,3 +2139,213 @@ async def sector_comment(request: Request):
         return {"comment": res.choices[0].message.content.strip()}
     except Exception as e:
         return {"comment": "解説を取得できませんでした。"}
+
+
+@app.get("/user/profile")
+async def get_user_profile(userId: str):
+    """ユーザープロファイル取得"""
+    try:
+        res = user_profile_table.get_item(Key={'userId': userId})
+        item = res.get('Item')
+        if not item:
+            return {"exists": False}
+        return {"exists": True, **_from_decimal(item)}
+    except Exception as e:
+        return {"error": str(e), "exists": False}
+
+
+@app.post("/user/profile")
+async def save_user_profile(request: Request):
+    """ユーザープロファイル保存"""
+    try:
+        body = await request.json()
+        user_id = body.get("userId")
+        if not user_id:
+            return {"error": "userIdが必要です"}
+        item = {
+            "userId":          user_id,
+            "investment_style": body.get("investment_style", "中期"),
+            "trade_type":       body.get("trade_type", "現物のみ"),
+            "short_selling":    body.get("short_selling", "しない"),
+            "analysis_style":   body.get("analysis_style", "バランス型"),
+            "risk_level":       body.get("risk_level", "中"),
+            "experience":       body.get("experience", "中級"),
+            "market":           body.get("market", "両方"),
+            "concentration":    body.get("concentration", "分散派"),
+            "updated_at":       datetime.now().isoformat(),
+        }
+        user_profile_table.put_item(Item=item)
+        return {"success": True}
+    except Exception as e:
+        return {"error": str(e), "success": False}
+
+
+@app.post("/portfolio/diagnosis")
+async def portfolio_diagnosis(request: Request):
+    body = await request.json()
+    user_profile = body.get("user_profile", {})
+    holdings = body.get("holdings", [])
+    period = body.get("period", "中期")
+
+    # マクロ取得（キャッシュ対応済み）
+    macro = get_macro_data()
+
+    # 各銘柄の株価・テクニカル取得
+    enriched = []
+    for h in holdings:
+        ticker_code = h.get("ticker_code", "")
+        try:
+            tech = get_technical_data(ticker_code)
+            current_price = tech.get("price")
+
+            # 損益率計算
+            cost_price = h.get("cost_price")
+            shares = h.get("shares")
+            position = h.get("position", "買い")
+            profit_loss_pct = None
+            profit_loss_yen = None
+            if cost_price and current_price:
+                if position == "買い":
+                    profit_loss_pct = round(
+                        (current_price - cost_price) / cost_price * 100, 2)
+                else:  # 空売り
+                    profit_loss_pct = round(
+                        (cost_price - current_price) / cost_price * 100, 2)
+                if shares:
+                    profit_loss_yen = round(
+                        (current_price - cost_price) * shares *
+                        (1 if position == "買い" else -1), 0)
+
+            enriched.append({
+                **h,
+                "current_price": current_price,
+                "profit_loss_pct": profit_loss_pct,
+                "profit_loss_yen": profit_loss_yen,
+                "rsi": tech.get("rsi"),
+                "macd": tech.get("macd"),
+                "ma5": tech.get("ma5"),
+                "ma25": tech.get("ma25"),
+            })
+        except Exception as e:
+            enriched.append({**h, "current_price": None, "error": str(e)})
+
+    # プロンプト組み立て
+    holdings_blocks = ""
+    for h in enriched:
+        cost_str = f"{h.get('cost_price')}円" if h.get('cost_price') else "未入力"
+        shares_str = f"{h.get('shares')}株" if h.get('shares') else "未入力"
+        pl_str = f"{h.get('profit_loss_pct')}%" if h.get('profit_loss_pct') is not None else "不明"
+        pl_yen = f"（{h.get('profit_loss_yen'):+,.0f}円）" if h.get('profit_loss_yen') is not None else ""
+        holdings_blocks += f"""
+=== {h.get('name')}（{h.get('code')}） ===
+取引種別：{h.get('trade_type', '現物')}　ポジション：{h.get('position', '買い')}
+現在株価：{h.get('current_price')}円　取得単価：{cost_str}　保有株数：{shares_str}
+損益率：{pl_str}{pl_yen}
+RSI(14)：{h.get('rsi')}　MACD：{h.get('macd')}　MA5：{h.get('ma5')}円　MA25：{h.get('ma25')}円
+"""
+
+    prompt = f"""
+あなたは株式投資の専門アナリストです。
+以下のポートフォリオを詳細に診断してください。
+各銘柄について「継続保有・買い増し・利確・損切り」のいずれかを確率ベースで判断し、
+具体的な数値を引用した理由を記述してください。
+確率（継続保有・買い増し・利確・損切り）の合計は必ず100にすること。
+JSONのみ出力（前置き・説明文禁止）。
+
+【ユーザープロファイル】
+- 投資スタイル：{user_profile.get('investment_style', '中期')}
+- リスク許容度：{user_profile.get('risk_level', '中')}
+- 取引種別：{user_profile.get('trade_type', '現物のみ')}
+- 分析スタイル：{user_profile.get('analysis_style', 'バランス型')}
+- 投資経験：{user_profile.get('experience', '中級')}
+
+【市場環境】
+- 日経平均トレンド：{macro.get('nikkei_trend')}
+- VIX：{macro.get('vix')}（20以下=安定／30以上=恐怖状態）
+- ドル円：{macro.get('usd_jpy')}円
+- 米10年債：{macro.get('us10y')}%
+- S&P500トレンド：{macro.get('sp500_trend')}
+- 金利差(10Y-2Y)：{macro.get('yield_spread')}
+
+【保有銘柄】
+{holdings_blocks}
+
+【診断期間】
+- 対象期間：{period}
+  ※短期（数日〜2週間）はテクニカル・需給重視
+  ※中期（1〜3ヶ月）はテクニカル＋ファンダ＋マクロのバランス
+  ※長期（6ヶ月以上）はファンダメンタル・バリュエーション重視
+
+【診断指示】
+{period}の観点で各銘柄を診断してください。：
+- verdict：継続保有 / 買い増し / 利確推奨 / 損切り推奨
+- probability：継続保有・買い増し・利確・損切りの確率（合計100）
+- confidence：high / medium / low
+- price_strategy：利確目安価格・損切り目安価格・根拠
+- positive_points：保有継続・買い増しの根拠（3点、指標名と数値を含め2文以上）
+- negative_points：リスク・売却根拠（3点、指標名と数値を含め2文以上）
+- macro_impact：市場環境がこの銘柄に与える影響
+- summary：5〜8文の詳細サマリー（数値引用必須）
+
+空売りポジションは上昇が損失になることを考慮。
+信用取引は追証リスクも考慮。
+リスク許容度が低い場合は損切り推奨寄りに補正。
+
+必ずJSONのみで返してください：
+{{
+  "market_environment": {{
+    "summary": "市場環境の総合コメント（3〜4文）",
+    "risk_mode": "risk_on / risk_off / neutral",
+    "risk_mode_reason": "VIX・米株・ドル円から3文で"
+  }},
+  "holdings": [
+    {{
+      "code": "",
+      "name": "",
+      "current_price": 0,
+      "profit_loss_pct": 0,
+      "verdict": "継続保有 / 買い増し / 利確推奨 / 損切り推奨",
+      "probability": {{
+        "hold":     {{"value": 継続保有確率(整数), "reason": "2〜3文で具体的に"}},
+        "add":      {{"value": 買い増し確率(整数), "reason": "2〜3文で具体的に"}},
+        "take_profit": {{"value": 利確確率(整数), "reason": "2〜3文で具体的に"}},
+        "cut_loss": {{"value": 損切り確率(整数), "reason": "2〜3文で具体的に"}}
+      }},
+      "confidence": {{"value": "high/medium/low", "reason": "2文で"}},
+      "price_strategy": {{
+        "take_profit": {{"value": 0, "reason": "3〜4文で根拠を説明"}},
+        "stop_loss":   {{"value": 0, "reason": "3〜4文で根拠を説明"}}
+      }},
+      "macro_impact": {{"value": "positive/negative/neutral", "reason": "この銘柄への市場環境の影響を2〜3文で"}},
+      "positive_points": ["根拠1（指標名と数値を含め2文以上）", "根拠2", "根拠3"],
+      "negative_points": ["リスク1（指標名と数値を含め2文以上）", "リスク2", "リスク3"],
+      "summary": "5〜8文の詳細サマリー（RSI・MACD・損益率などの数値を引用）"
+    }}
+  ],
+  "portfolio_analysis": {{
+    "sector_balance": "セクターバランスの詳細コメント（3〜4文）",
+    "concentration_risk": "集中リスクの詳細コメント（3〜4文）",
+    "overall_comment": "ポートフォリオ全体の総評（5〜8文、ユーザープロファイルを考慮）"
+  }}
+}}
+"""
+
+    try:
+        res = openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "あなたは株式投資の専門アナリストです。必ずJSON形式のみで返してください。"},
+                {"role": "user", "content": prompt}
+            ],
+            max_tokens=3000,
+        )
+        raw = res.choices[0].message.content.strip()
+        raw = raw.replace("```json", "").replace("```", "").strip()
+        result = json.loads(raw)
+        result["_prompt"] = prompt
+        result["_holdings_data"] = enriched
+        return result
+    except json.JSONDecodeError as e:
+        return {"error": "AI分析結果の解析に失敗しました。もう一度お試しください。"}
+    except Exception as e:
+        return {"error": f"診断に失敗しました：{str(e)}"}

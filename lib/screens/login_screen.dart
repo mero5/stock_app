@@ -6,6 +6,8 @@ import 'terms_screen.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/services.dart';
 import 'onboarding_screen.dart';
+import 'profile_setup_screen.dart';
+import '../services/user_profile_service.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -167,13 +169,33 @@ class _LoginScreenState extends State<LoginScreen> {
       if (success && mounted) {
         final prefs = await SharedPreferences.getInstance();
         final agreed = prefs.getBool('terms_agreed') ?? false;
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(
-            builder: (_) =>
-                agreed ? const HomeScreen() : const OnboardingScreen(),
-          ),
-        );
+        if (!agreed) {
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(builder: (_) => const OnboardingScreen()),
+          );
+          return;
+        }
+        // プロファイル確認
+        final userId = await AuthService.getUserId();
+        if (!mounted) return;
+        final profile = await UserProfileService.getProfile(userId!);
+        if (!mounted) return;
+        if (profile == null) {
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(
+              builder: (_) => ProfileSetupScreen(userId: userId),
+            ),
+          );
+        } else {
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(builder: (_) => const HomeScreen()),
+          );
+        }
+      } else if (mounted) {
+        _showError('ログインに失敗しました。メールアドレスとパスワードを確認してください。');
       }
     } catch (e) {
       final msg = e.toString().toLowerCase();

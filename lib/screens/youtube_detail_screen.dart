@@ -244,8 +244,6 @@ class YoutubeDetailScreen extends StatelessWidget {
               child: Text(
                 reason,
                 style: const TextStyle(fontSize: 11, color: Colors.black54),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
               ),
             ),
           ],

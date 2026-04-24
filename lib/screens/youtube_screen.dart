@@ -5,6 +5,7 @@ import '../config/constants.dart';
 import '../services/auth_service.dart';
 import '../services/channel_service.dart';
 import 'youtube_detail_screen.dart';
+import 'youtube_video_list_screen.dart';
 
 class YoutubeScreen extends StatefulWidget {
   const YoutubeScreen({super.key});
@@ -35,7 +36,7 @@ class _YoutubeScreenState extends State<YoutubeScreen>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 3, vsync: this);
+    _tabController = TabController(length: 2, vsync: this);
     _initUserId();
   }
 
@@ -239,7 +240,6 @@ class _YoutubeScreenState extends State<YoutubeScreen>
           tabs: const [
             Tab(icon: Icon(Icons.search), text: "検索"),
             Tab(icon: Icon(Icons.subscriptions), text: "登録"),
-            Tab(icon: Icon(Icons.summarize), text: "要約"),
           ],
         ),
       ),
@@ -364,6 +364,14 @@ class _YoutubeScreenState extends State<YoutubeScreen>
             icon: const Icon(Icons.delete, color: Colors.red),
             onPressed: () => deleteChannel(channel["channel_id"]!), //  async対応
           ),
+          onTap: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => YoutubeVideoListScreen(channel: channel),
+              ),
+            );
+          },
         );
       },
     );

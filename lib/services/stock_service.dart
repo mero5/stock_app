@@ -307,4 +307,21 @@ class StockService {
       return '';
     }
   }
+
+  static Future<List<Map<String, dynamic>>> getChannelVideos(
+    String channelId, {
+    int maxResults = 10,
+  }) async {
+    try {
+      final res = await http.get(
+        Uri.parse(
+          "${Constants.backendUrl}/channels/$channelId/videos?max_results=$maxResults",
+        ),
+      );
+      final data = jsonDecode(res.body);
+      return List<Map<String, dynamic>>.from(data['videos'] ?? []);
+    } catch (e) {
+      return [];
+    }
+  }
 }
