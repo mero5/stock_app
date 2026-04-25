@@ -1819,6 +1819,9 @@ class _DetailScreenState extends State<DetailScreen> {
       _analysisProgress = 0.0;
     });
 
+    // ① 先にセクターデータを取得
+    final sectorData = await StockService.getSectorTrends();
+
     final progressTimer = Timer.periodic(const Duration(milliseconds: 450), (
       timer,
     ) {
@@ -1841,6 +1844,7 @@ class _DetailScreenState extends State<DetailScreen> {
         lastCandle: lastCandle,
         checks: _analysisChecks,
         period: _selectedPeriod,
+        sectorData: sectorData, // ② 取得したデータを渡す
       );
       progressTimer.cancel();
       setState(() {

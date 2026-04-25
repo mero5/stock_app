@@ -250,6 +250,7 @@ class StockService {
     required Map<String, dynamic> lastCandle,
     required Map<String, bool> checks,
     String period = '短期',
+    Map<String, dynamic>? sectorData,
   }) async {
     try {
       final res = await http.post(
@@ -273,6 +274,7 @@ class StockService {
           "revenue_growth": detail['revenue_growth'],
           "news": detail['news'] ?? [],
           "checks": checks,
+          "sector_data": sectorData ?? {},
         }),
       );
       return jsonDecode(res.body) as Map<String, dynamic>;

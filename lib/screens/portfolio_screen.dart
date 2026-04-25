@@ -83,7 +83,6 @@ class _PortfolioScreenState extends State<PortfolioScreen> {
   }
 
   Future<void> _analyze() async {
-    // 銘柄が1つも設定されていない場合
     if (_holdings.isEmpty ||
         _holdings.every((h) => h['code'].toString().isEmpty)) {
       ScaffoldMessenger.of(
@@ -91,7 +90,6 @@ class _PortfolioScreenState extends State<PortfolioScreen> {
       ).showSnackBar(const SnackBar(content: Text('銘柄を1つ以上追加してください')));
       return;
     }
-    // 銘柄コード未設定のカードを除外
     final validHoldings = _holdings
         .where((h) => h['code'].toString().isNotEmpty)
         .toList();
@@ -102,17 +100,26 @@ class _PortfolioScreenState extends State<PortfolioScreen> {
     });
 
     try {
+      // ① 先にセクターデータを取得
+      final sectorData = await StockService.getSectorTrends();
+
+      // ② lastPromptにも反映
       _lastPrompt = jsonEncode({
         "user_profile": _userProfile ?? {},
         "holdings": validHoldings,
         "period": _selectedPeriod,
+        "sector_data": sectorData,
       });
+
+      // ③ リクエストボディにperiodとsector_dataを追加
       final res = await http.post(
         Uri.parse("${Constants.backendUrl}/portfolio/diagnosis"),
         headers: {"Content-Type": "application/json"},
         body: jsonEncode({
           "user_profile": _userProfile ?? {},
           "holdings": validHoldings,
+          "period": _selectedPeriod,
+          "sector_data": sectorData,
         }),
       );
       final data = jsonDecode(res.body) as Map<String, dynamic>;
@@ -383,15 +390,20 @@ class _PortfolioScreenState extends State<PortfolioScreen> {
                     label: '取引種別',
                     options: ['現物', '信用'],
                     selected: h['trade_type'],
-                    onSelect: (v) =>
-                        setState(() => _holdings[index]['trade_type'] = v),
+                    onSelect: (v) => setState(() {
+                      _holdings[index]['trade_type'] = v;
+                      // 現物に変更したら空売りをリセット
+                      if (v == '現物' && _holdings[index]['position'] == '空売り') {
+                        _holdings[index]['position'] = '買い';
+                      }
+                    }),
                   ),
                 ),
                 const SizedBox(width: 8),
                 Expanded(
                   child: _toggleField(
                     label: 'ポジション',
-                    options: ['買い', '空売り'],
+                    options: h['trade_type'] == '現物' ? ['買い'] : ['買い', '空売り'],
                     selected: h['position'],
                     onSelect: (v) =>
                         setState(() => _holdings[index]['position'] = v),

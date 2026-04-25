@@ -1629,18 +1629,45 @@ def fmt(val, suffix="", null_str="データなし"):
 
 
 def build_short_prompt(name, code, tech, fund, macro, breadth,
-                       earnings_alert, news_summary, score, user_profile) -> str:
+                       earnings_alert, news_summary, score, user_profile,
+                       sector="不明", industry="不明") -> str:
     return f"""
 あなたは日本株の短期スイングトレード専門アナリストです。
 以下のデータを元に{name}（{code}）が1〜2週間で「上昇・様子見・下落」のどれになるかを確率ベースで判断してください。
 
 【前提】
-- テクニカル・需給・市場環境・マクロを最優先
-- ファンダは参考程度
 - すべての判断には具体的な数値を引用した理由を付ける（3文以上）
 - 確率の合計は必ず100にすること
 - リスク許容度が低い場合は様子見寄りに補正すること
 - JSONのみ出力（前置き・説明文禁止）
+
+【最重要ルール】
+- RSI・MACDなど単一指標で結論を出してはいけない
+- 「今の相場で資金が入る銘柄か」を最優先に判断する
+- セクター強度と資金流入を必ず評価する
+- 個別ではなく相対評価（強い/普通/弱い）で判断する
+
+【優先順位】
+1. セクター資金フロー（最重要）
+2. 地合い（指数・VIX）
+3. 短期トレンド（MA・出来高）
+4. テクニカル（RSI・MACD）
+5. ファンダメンタル（補助）
+
+【推定ルール（データが無い場合）】
+- セクター強度：ニュース、指数トレンド、マクロ（原油・金利・為替）から推定し、必ず「strong/neutral/weak」で評価する
+- 資金流入：出来高の増減（データがあれば）、なければ直近の値動きの強弱とニュースから「inflow/neutral/outflow」で推定する
+- トレンド：MA25を基準に「uptrend/downtrend/sideways」で必ず判定する
+- 推定した場合は、必ず「推定」と明記すること
+
+【禁止】
+- RSIやMACDのみで結論を出す
+- データが無いのに断定する（必ず推定と書く）
+
+【必須分析】
+- セクターに資金が入っているか
+- 需給（強い銘柄か弱い銘柄か）
+- 短期トレンドが継続しているか
 
 【ユーザープロファイル】
 - リスク許容度：{user_profile.get('risk_level', '中')}
@@ -1677,6 +1704,10 @@ def build_short_prompt(name, code, tech, fund, macro, breadth,
 - 騰落レシオ：{fmt(breadth.get('advance_decline_ratio'))}
   ※120以上=過熱感／70以下=売られすぎ
 - 上昇銘柄数：{fmt(breadth.get('advancers'))} / 下落銘柄数：{fmt(breadth.get('decliners'))}
+
+【セクター情報】
+- セクター：{sector}
+- 業種：{industry}
 
 【ファンダ（参考）】
 - PER：{fmt(fund.get('per'), '倍')} / PBR：{fmt(fund.get('pbr'), '倍')}
@@ -1755,11 +1786,40 @@ def build_medium_prompt(name, code, tech, fund, macro, breadth,
 以下のデータを元に{name}（{code}）が1〜3ヶ月で「上昇・様子見・下落」のどれになるかを確率ベースで判断してください。
 
 【前提】
-- テクニカルのトレンド継続性とファンダ・マクロを同等に重視
 - 短期ノイズより中期トレンドを優先
 - すべての判断には具体的な数値を引用した理由を付ける（3文以上）
 - 確率の合計は必ず100にすること
 - JSONのみ出力（前置き・説明文禁止）
+
+【最重要ルール】
+- RSI・MACDなど単一指標で結論を出してはいけない
+- 「今の相場で資金が入る銘柄か」を最優先に判断する
+- セクター強度と資金流入を必ず評価する
+- 個別ではなく相対評価（強い/普通/弱い）で判断する
+
+【優先順位】
+1. セクター強度（最重要）
+2. 資金流入/流出（テーマ性）
+3. マクロ環境（為替・金利・原油）
+4. トレンド（MA25）
+5. ファンダメンタル（成長・割安）
+6. テクニカル（補助）
+
+【推定ルール（データが無い場合）】
+- セクター強度：ニュース、指数トレンド、マクロ（原油・金利・為替）から推定し、必ず「strong/neutral/weak」で評価する
+- 資金流入：出来高の増減（データがあれば）、なければ直近の値動きの強弱とニュースから「inflow/neutral/outflow」で推定する
+- トレンド：MA25を基準に「uptrend/downtrend/sideways」で必ず判定する
+- 推定した場合は、必ず「推定」と明記すること
+
+【禁止】
+- RSIやMACDのみで結論を出す
+- データが無いのに断定する（必ず推定と書く）
+
+【必須分析】
+- この銘柄のセクターは強いか（強い/普通/弱い）
+- 市場資金は流入しているか
+- 相場テーマに合っているか
+- トレンドは継続か崩れか
 
 【ユーザープロファイル】
 - リスク許容度：{user_profile.get('risk_level', '中')}
@@ -1785,6 +1845,10 @@ def build_medium_prompt(name, code, tech, fund, macro, breadth,
 【市場内部】
 - 騰落レシオ：{fmt(breadth.get('advance_decline_ratio'))}
 - 上昇銘柄数：{fmt(breadth.get('advancers'))} / 下落銘柄数：{fmt(breadth.get('decliners'))}
+
+【セクター情報】
+- セクター：{sector}
+- 業種：{industry}
 
 【ファンダメンタル】
 - PER：{fmt(fund.get('per'), '倍')}
@@ -1871,10 +1935,38 @@ def build_long_prompt(name, code, tech, fund, macro,
 
 【前提】
 - 企業の成長性・収益性・財務健全性とマクロ環境を最優先
-- 短期ノイズは無視・テクニカルは参考程度
 - すべての判断には具体的な数値を引用した理由を付ける（3文以上）
 - 確率の合計は必ず100にすること
 - JSONのみ出力（前置き・説明文禁止）
+
+【最重要ルール】
+- RSI・MACDなど単一指標で結論を出してはいけない
+- 「今の相場で資金が入る銘柄か」を最優先に判断する
+- セクター強度と資金流入を必ず評価する
+- 個別ではなく相対評価（強い/普通/弱い）で判断する
+
+【優先順位】
+1. ファンダメンタル（最重要）
+2. 成長性（売上・ROE）
+3. マクロ環境（金利・為替）
+4. セクター構造（市場テーマ）
+5. バリュエーション（PER・PBR）
+6. テクニカル（参考程度）
+
+【推定ルール（データが無い場合）】
+- セクター強度：ニュース、指数トレンド、マクロ（原油・金利・為替）から推定し、必ず「strong/neutral/weak」で評価する
+- 資金流入：出来高の増減（データがあれば）、なければ直近の値動きの強弱とニュースから「inflow/neutral/outflow」で推定する
+- トレンド：MA25を基準に「uptrend/downtrend/sideways」で必ず判定する
+- 推定した場合は、必ず「推定」と明記すること
+
+【禁止】
+- RSIやMACDのみで結論を出す
+- データが無いのに断定する（必ず推定と書く）
+
+【必須分析】
+- 長期成長できる企業か
+- セクターが今後伸びるか
+- 金利環境が追い風か逆風か
 
 【ユーザープロファイル】
 - リスク許容度：{user_profile.get('risk_level', '中')}
@@ -1900,6 +1992,10 @@ def build_long_prompt(name, code, tech, fund, macro,
   ※プラス=キャッシュ創出力あり
 - アナリスト目標株価：{fmt(fund.get('target_price'), '円')}
 - アナリスト評価：{fmt(fund.get('analyst_rating'))}
+
+【セクター情報】
+- セクター：{sector}
+- 業種：{industry}
 
 【テクニカル（参考）】
 - 現在株価：{fmt(tech.get('price'), '円')}
@@ -1984,6 +2080,10 @@ async def swing_analysis(request: Request):
         "analysis_style": body.get("analysis_style", "バランス型"),
     }
 
+    sector_data = body.get("sector_data", {})
+    jp_sectors  = sector_data.get("jp", [])
+    us_sectors  = sector_data.get("us", [])
+
     # ニュース
     news_list = body.get("news", [])
     news_summary = "\n".join([
@@ -2011,10 +2111,20 @@ async def swing_analysis(request: Request):
         tech, fund, macro, breadth = await asyncio.gather(
             tech_f, fund_f, macro_f, breadth_f
         )
+        sector_name  = fund.get("sector", "")
+        sector_trend = "不明"
+        for s in jp_sectors + us_sectors:
+            if s.get("name") in sector_name or sector_name in s.get("name", ""):
+                sector_trend = f"{s['change_pct']:+.2f}%（5日:{s['trend_5d']:+.2f}%）"
+                break
+        macro["sector_trend"] = sector_trend
 
     # 信用残・空売り（フロントから渡すか、後でバッチ化）
     macro["margin_ratio"] = body.get("margin_ratio")
     macro["short_ratio"]  = body.get("short_ratio")
+
+    sector   = fund.get("sector")   or "不明"
+    industry = fund.get("industry") or "不明"
 
     # 決算アラート判定
     earnings_alert = get_earnings_alert(earnings_date_str, period)
@@ -2023,24 +2133,27 @@ async def swing_analysis(request: Request):
     if period == "短期":
         prompt = build_short_prompt(
             name, code, tech, fund, macro, breadth,
-            earnings_alert, news_summary, score, user_profile
+            earnings_alert, news_summary, score, user_profile,
+            sector, industry
         )
     elif period == "中期":
         prompt = build_medium_prompt(
             name, code, tech, fund, macro, breadth,
-            earnings_alert, news_summary, score, user_profile
+            earnings_alert, news_summary, score, user_profile,
+            sector, industry
         )
     else:
         prompt = build_long_prompt(
             name, code, tech, fund, macro,
-            news_summary, score, user_profile
+            news_summary, score, user_profile,
+            sector, industry
         )
 
     # ── AI呼び出し ──
     raw = ""
     try:
         res = openai_client.chat.completions.create(
-            model="gpt-4o-mini",
+            model="gpt-4o",
             messages=[
                 {
                     "role": "system",
@@ -2129,7 +2242,7 @@ async def sector_comment(request: Request):
 """
     try:
         res = openai_client.chat.completions.create(
-            model="gpt-4o-mini",
+            model="gpt-4o",
             messages=[
                 {"role": "system", "content": "あなたは株式市場のアナリストです。簡潔に日本語で答えてください。"},
                 {"role": "user", "content": prompt}
@@ -2196,6 +2309,7 @@ async def portfolio_diagnosis(request: Request):
         ticker_code = h.get("ticker_code", "")
         try:
             tech = get_technical_data(ticker_code)
+            fund = get_fundamental_data(ticker_code)
             current_price = tech.get("price")
 
             # 損益率計算
@@ -2225,6 +2339,8 @@ async def portfolio_diagnosis(request: Request):
                 "macd": tech.get("macd"),
                 "ma5": tech.get("ma5"),
                 "ma25": tech.get("ma25"),
+                "sector":           fund.get("sector")   or "不明",
+                "industry":         fund.get("industry") or "不明",
             })
         except Exception as e:
             enriched.append({**h, "current_price": None, "error": str(e)})
@@ -2238,6 +2354,7 @@ async def portfolio_diagnosis(request: Request):
         pl_yen = f"（{h.get('profit_loss_yen'):+,.0f}円）" if h.get('profit_loss_yen') is not None else ""
         holdings_blocks += f"""
 === {h.get('name')}（{h.get('code')}） ===
+セクター：{h.get('sector', '不明')} / 業種：{h.get('industry', '不明')}
 取引種別：{h.get('trade_type', '現物')}　ポジション：{h.get('position', '買い')}
 現在株価：{h.get('current_price')}円　取得単価：{cost_str}　保有株数：{shares_str}
 損益率：{pl_str}{pl_yen}
@@ -2251,6 +2368,19 @@ RSI(14)：{h.get('rsi')}　MACD：{h.get('macd')}　MA5：{h.get('ma5')}円　MA
 具体的な数値を引用した理由を記述してください。
 確率（継続保有・買い増し・利確・損切り）の合計は必ず100にすること。
 JSONのみ出力（前置き・説明文禁止）。
+
+【最重要ルール】
+- 損益率のみで損切り判断をしてはいけない
+- RSI・MACDなど単一指標で結論を出してはいけない
+- 「今の相場で資金が入る銘柄か」を最優先に判断する
+- 必ずセクター単位で強さを評価する
+- 個別ではなく相対評価（強い/普通/弱い）で判断する
+
+【必須分析（全銘柄共通）】
+- セクターは強いか（強い/普通/弱い）
+- 資金は流入しているか
+- 相場テーマに合っているか
+- ポートフォリオ内で強いか弱いか
 
 【ユーザープロファイル】
 - 投資スタイル：{user_profile.get('investment_style', '中期')}
@@ -2267,14 +2397,49 @@ JSONのみ出力（前置き・説明文禁止）。
 - S&P500トレンド：{macro.get('sp500_trend')}
 - 金利差(10Y-2Y)：{macro.get('yield_spread')}
 
+【判断の優先順位】
+1. セクター強度（最重要）
+2. 資金流入/流出（テーマ）
+3. マクロ環境（為替・金利）
+4. トレンド（MA）
+5. テクニカル（RSI・MACD）
+6. 損益（参考程度）
+
+【推定ルール（データが無い場合）】
+- セクター強度：ニュース、指数トレンド、マクロ（原油・金利・為替）から推定し、必ず「strong/neutral/weak」で評価する
+- 資金流入：出来高の増減（データがあれば）、なければ直近の値動きの強弱とニュースから「inflow/neutral/outflow」で推定する
+- トレンド：MA25を基準に「uptrend/downtrend/sideways」で必ず判定する
+- 推定した場合は、必ず「推定」と明記すること
+
+【禁止】
+- RSIやMACDのみで結論を出す
+- データが無いのに断定する（必ず推定と書く）
+
+【セクター情報】
+- セクター：{sector}
+- 業種：{industry}
+- セクター騰落率（本日）：{macro.get('sector_trend', '不明')}
+  ※プラスなら資金流入、マイナスなら資金流出の目安
+
 【保有銘柄】
 {holdings_blocks}
 
 【診断期間】
 - 対象期間：{period}
-  ※短期（数日〜2週間）はテクニカル・需給重視
-  ※中期（1〜3ヶ月）はテクニカル＋ファンダ＋マクロのバランス
-  ※長期（6ヶ月以上）はファンダメンタル・バリュエーション重視
+
+※短期（数日〜2週間）
+資金フローと需給を最優先とし、セクター強度と資金流入を重視する。
+テクニカル（RSI・MACD）は補助として使用する。
+
+※中期（1〜3ヶ月）
+セクター強度と市場の資金流入を最優先とし、
+トレンド（MA）とマクロ環境（為替・金利・原油）を重視する。
+ファンダメンタルは補助的に評価し、テクニカルは参考程度とする。
+
+※長期（6ヶ月以上）
+ファンダメンタル（成長性・収益性）とバリュエーションを最優先とし、
+マクロ環境とセクター構造を評価する。
+テクニカル指標は原則として判断に使用しない。
 
 【診断指示】
 {period}の観点で各銘柄を診断してください。：
@@ -2282,14 +2447,28 @@ JSONのみ出力（前置き・説明文禁止）。
 - probability：継続保有・買い増し・利確・損切りの確率（合計100）
 - confidence：high / medium / low
 - price_strategy：利確目安価格・損切り目安価格・根拠
-- positive_points：保有継続・買い増しの根拠（3点、指標名と数値を含め2文以上）
-- negative_points：リスク・売却根拠（3点、指標名と数値を含め2文以上）
+- positive_points：保有継続・買い増しの根拠）
+- negative_points：リスク・売却根拠
 - macro_impact：市場環境がこの銘柄に与える影響
 - summary：5〜8文の詳細サマリー（数値引用必須）
 
-空売りポジションは上昇が損失になることを考慮。
-信用取引は追証リスクも考慮。
-リスク許容度が低い場合は損切り推奨寄りに補正。
+【取引種別ごとの評価基準】
+各銘柄の trade_type に応じて以下の基準で評価すること：
+
+・現物取引の場合：
+  - 損失は投資額までに限定される
+  - 長期保有も選択肢に入れて評価する
+  - 損切り推奨の閾値はやや緩め（-15%〜-20%程度）
+
+・信用取引の場合：
+  - 追証リスクを必ず考慮する
+  - 損切り推奨の閾値は厳しめ（-8%〜-10%程度）
+  - レバレッジによる損失拡大リスクを明記する
+
+・空売りポジションの場合：
+  - 上昇が損失になることを必ず考慮する
+  - 損失は理論上無限大になるため損切りラインを必ず設定する
+  - 買い戻しタイミングを price_strategy に明記する
 
 必ずJSONのみで返してください：
 {{
@@ -2317,22 +2496,22 @@ JSONのみ出力（前置き・説明文禁止）。
         "stop_loss":   {{"value": 0, "reason": "3〜4文で根拠を説明"}}
       }},
       "macro_impact": {{"value": "positive/negative/neutral", "reason": "この銘柄への市場環境の影響を2〜3文で"}},
-      "positive_points": ["根拠1（指標名と数値を含め2文以上）", "根拠2", "根拠3"],
-      "negative_points": ["リスク1（指標名と数値を含め2文以上）", "リスク2", "リスク3"],
-      "summary": "5〜8文の詳細サマリー（RSI・MACD・損益率などの数値を引用）"
+      "positive_points": ["根拠1", "根拠2", "根拠3"],
+      "negative_points": ["リスク1", "リスク2", "リスク3"],
+      "summary": "5〜8文の詳細サマリー"
     }}
   ],
   "portfolio_analysis": {{
     "sector_balance": "セクターバランスの詳細コメント（3〜4文）",
     "concentration_risk": "集中リスクの詳細コメント（3〜4文）",
-    "overall_comment": "ポートフォリオ全体の総評（5〜8文、ユーザープロファイルを考慮）"
+    "overall_comment": "ポートフォリオ全体の総評（5〜8文、診断期間を考慮）"
   }}
 }}
 """
 
     try:
         res = openai_client.chat.completions.create(
-            model="gpt-4o-mini",
+            model="gpt-4o",
             messages=[
                 {"role": "system", "content": "あなたは株式投資の専門アナリストです。必ずJSON形式のみで返してください。"},
                 {"role": "user", "content": prompt}
