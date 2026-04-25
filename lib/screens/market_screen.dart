@@ -2,7 +2,13 @@ import 'package:flutter/material.dart';
 import '../services/stock_service.dart';
 
 class MarketScreen extends StatefulWidget {
-  const MarketScreen({super.key});
+  final bool apiAvailable;
+  final String apiErrorMsg;
+  const MarketScreen({
+    super.key,
+    this.apiAvailable = true,
+    this.apiErrorMsg = '',
+  });
 
   @override
   State<MarketScreen> createState() => _MarketScreenState();

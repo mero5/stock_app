@@ -7,7 +7,13 @@ import '../services/user_profile_service.dart';
 import '../services/stock_service.dart';
 
 class PortfolioScreen extends StatefulWidget {
-  const PortfolioScreen({super.key});
+  final bool apiAvailable;
+  final String apiErrorMsg;
+  const PortfolioScreen({
+    super.key,
+    this.apiAvailable = true,
+    this.apiErrorMsg = '',
+  });
 
   @override
   State<PortfolioScreen> createState() => _PortfolioScreenState();
@@ -265,7 +271,10 @@ class _PortfolioScreenState extends State<PortfolioScreen> {
               ),
               // 診断ボタン
               ElevatedButton.icon(
-                onPressed: _isAnalyzing || _holdings.isEmpty ? null : _analyze,
+                onPressed:
+                    _isAnalyzing || _holdings.isEmpty || !widget.apiAvailable
+                    ? null
+                    : _analyze,
                 icon: _isAnalyzing
                     ? const SizedBox(
                         width: 16,
@@ -772,7 +781,7 @@ class _PortfolioScreenState extends State<PortfolioScreen> {
                   borderRadius: BorderRadius.circular(8),
                   border: Border.all(color: Colors.grey.shade200),
                 ),
-                child: Text(
+                child: SelectableText(
                   prompt,
                   style: const TextStyle(fontSize: 11, height: 1.5),
                 ),
@@ -1270,6 +1279,7 @@ class _PortfolioScreenState extends State<PortfolioScreen> {
 
   String _fmt(dynamic val) {
     if (val == null) return '---';
+    if (val is String) return val;
     final n = (val as num).toDouble();
     return n.toStringAsFixed(n.truncateToDouble() == n ? 0 : 1);
   }

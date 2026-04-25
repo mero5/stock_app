@@ -1524,20 +1524,41 @@ def get_fundamental_data(ticker_code: str) -> dict:
         t    = yf.Ticker(ticker_code)
         info = t.info
         result = {
-            "per":             safe_float(info.get("trailingPE")),
-            "pbr":             safe_float(info.get("priceToBook")),
-            "roe":             safe_float(info.get("returnOnEquity",  0) * 100) if info.get("returnOnEquity")  else None,
-            "roa":             safe_float(info.get("returnOnAssets",  0) * 100) if info.get("returnOnAssets")  else None,
-            "revenue_growth":  safe_float(info.get("revenueGrowth",  0) * 100) if info.get("revenueGrowth")   else None,
-            "eps_growth":      safe_float(info.get("earningsGrowth", 0) * 100) if info.get("earningsGrowth")  else None,
-            "operating_margin":safe_float(info.get("operatingMargins",0) * 100) if info.get("operatingMargins") else None,
-            "debt_ratio":      safe_float(info.get("debtToEquity")),
-            "equity_ratio":    safe_float(info.get("bookValue")),
-            "dividend_yield":  safe_float(info.get("dividendYield", 0) * 100) if info.get("dividendYield") else None,
-            "fcf":             info.get("freeCashflow"),
-            "target_price":    safe_float(info.get("targetMeanPrice")),
-            "analyst_rating":  info.get("recommendationKey"),
+            "per":              safe_float(info.get("trailingPE")),
+            "pbr":              safe_float(info.get("priceToBook")),
+            "roe":              safe_float(info.get("returnOnEquity",  0) * 100) if info.get("returnOnEquity")    else None,
+            "roa":              safe_float(info.get("returnOnAssets",  0) * 100) if info.get("returnOnAssets")    else None,
+            "revenue_growth":   safe_float(info.get("revenueGrowth",  0) * 100) if info.get("revenueGrowth")     else None,
+            "eps_growth":       safe_float(info.get("earningsGrowth", 0) * 100) if info.get("earningsGrowth")    else None,
+            "operating_margin": safe_float(info.get("operatingMargins",0) * 100) if info.get("operatingMargins") else None,
+            "debt_ratio":       safe_float(info.get("debtToEquity")),
+            "equity_ratio":     safe_float(info.get("bookValue")),
+            "dividend_yield":   safe_float(info.get("dividendYield", 0) * 100) if info.get("dividendYield")      else None,
+            "fcf":              info.get("freeCashflow"),
+            "target_price":     safe_float(info.get("targetMeanPrice")),
+            "analyst_rating":   info.get("recommendationKey"),
+            "sector":           info.get("sector"),
+            "industry":         info.get("industry"),
         }
+
+        # 年次トレンドデータ（長期診断用）
+        try:
+            fin = t.financials
+            if 'Total Revenue' in fin.index:
+                rev = fin.loc['Total Revenue'].sort_index()
+                result["revenue_trend"] = {
+                    str(k.year): round(float(v) / 1e8, 1)
+                    for k, v in rev.items()
+                }
+            if 'Operating Income' in fin.index:
+                op = fin.loc['Operating Income'].sort_index()
+                result["op_income_trend"] = {
+                    str(k.year): round(float(v) / 1e8, 1)
+                    for k, v in op.items()
+                }
+        except Exception as e:
+            print(f"年次トレンド取得エラー: {e}")
+
         # 24時間キャッシュ（ファンダは変化が少ない）
         cache_set(stock_cache_table,
                   {'code': ticker_code, 'cache_type': 'fundamental'},
@@ -2341,46 +2362,71 @@ async def portfolio_diagnosis(request: Request):
                 "ma25": tech.get("ma25"),
                 "sector":           fund.get("sector")   or "不明",
                 "industry":         fund.get("industry") or "不明",
+                "per":              fund.get("per"),
+                "pbr":              fund.get("pbr"),
+                "roe":              fund.get("roe"),
+                "revenue_growth":   fund.get("revenue_growth"),
+                "operating_margin": fund.get("operating_margin"),
             })
         except Exception as e:
             enriched.append({**h, "current_price": None, "error": str(e)})
 
     # プロンプト組み立て
+# 期間別で銘柄ブロックを変える
     holdings_blocks = ""
     for h in enriched:
-        cost_str = f"{h.get('cost_price')}円" if h.get('cost_price') else "未入力"
-        shares_str = f"{h.get('shares')}株" if h.get('shares') else "未入力"
-        pl_str = f"{h.get('profit_loss_pct')}%" if h.get('profit_loss_pct') is not None else "不明"
-        pl_yen = f"（{h.get('profit_loss_yen'):+,.0f}円）" if h.get('profit_loss_yen') is not None else ""
-        holdings_blocks += f"""
+        cost_str   = f"{h.get('cost_price')}円" if h.get('cost_price') else "未入力"
+        shares_str = f"{h.get('shares')}株"     if h.get('shares')     else "未入力"
+        pl_str     = f"{h.get('profit_loss_pct')}%" if h.get('profit_loss_pct') is not None else "不明"
+        pl_yen     = f"（{h.get('profit_loss_yen'):+,.0f}円）" if h.get('profit_loss_yen') is not None else ""
+
+        if period == "長期":
+            holdings_blocks += f"""
 === {h.get('name')}（{h.get('code')}） ===
 セクター：{h.get('sector', '不明')} / 業種：{h.get('industry', '不明')}
 取引種別：{h.get('trade_type', '現物')}　ポジション：{h.get('position', '買い')}
 現在株価：{h.get('current_price')}円　取得単価：{cost_str}　保有株数：{shares_str}
 損益率：{pl_str}{pl_yen}
-RSI(14)：{h.get('rsi')}　MACD：{h.get('macd')}　MA5：{h.get('ma5')}円　MA25：{h.get('ma25')}円
+PER：{h.get('per', '不明')}倍
+PBR：{h.get('pbr', '不明')}倍
+ROE：{h.get('roe', '不明')}%
+売上成長率（直近12ヶ月YoY）：{h.get('revenue_growth', '不明')}%
+売上高推移(億円)：{h.get('revenue_trend', {})}
+営業利益率（直近12ヶ月TTM）：{h.get('operating_margin', '不明')}%
+営業利益推移(億円)：{h.get('op_income_trend', {})}
+"""
+        else:
+            holdings_blocks += f"""
+=== {h.get('name')}（{h.get('code')}） ===
+セクター：{h.get('sector', '不明')} / 業種：{h.get('industry', '不明')}
+取引種別：{h.get('trade_type', '現物')}　ポジション：{h.get('position', '買い')}
+現在株価：{h.get('current_price')}円　取得単価：{cost_str}　保有株数：{shares_str}
+損益率：{pl_str}{pl_yen}
+RSI(14)：{h.get('rsi') if period != '長期' else 'テクニカル非使用'}　MACD：{h.get('macd') if period != '長期' else '-'}　MA5：{h.get('ma5') if period != '長期' else '-'}円　MA25：{h.get('ma25') if period != '長期' else '-'}円
 """
 
+    # ベースプロンプト
     prompt = f"""
 あなたは株式投資の専門アナリストです。
 以下のポートフォリオを詳細に診断してください。
-各銘柄について「継続保有・買い増し・利確・損切り」のいずれかを確率ベースで判断し、
-具体的な数値を引用した理由を記述してください。
 確率（継続保有・買い増し・利確・損切り）の合計は必ず100にすること。
 JSONのみ出力（前置き・説明文禁止）。
 
-【最重要ルール】
-- 損益率のみで損切り判断をしてはいけない
-- RSI・MACDなど単一指標で結論を出してはいけない
-- 「今の相場で資金が入る銘柄か」を最優先に判断する
-- 必ずセクター単位で強さを評価する
-- 個別ではなく相対評価（強い/普通/弱い）で判断する
+【データ補完ルール】
+以下のデータが「不明」の場合、AIが推定・補完して判断に使用すること：
+- セクター・業種が不明 → 銘柄名・コードからセクターを推定する
+  例：6758（ソニー）→ 電気機器・エンタメ、7203（トヨタ）→ 自動車
+- PER・PBR・ROEが不明 → 業種平均や一般的な水準から推定する
+  例：自動車セクターの平均PERは10〜15倍程度
+- 推定した場合は必ず「推定値」と明記すること
+- 推定が困難な場合は「データ不足」と記載すること
 
-【必須分析（全銘柄共通）】
-- セクターは強いか（強い/普通/弱い）
-- 資金は流入しているか
-- 相場テーマに合っているか
-- ポートフォリオ内で強いか弱いか
+【共通ルール】
+- 各期間の「最重要ルール」に従うこと（共通ルールより優先）
+- 損益率のみで損切り判断をしてはいけない
+- 単一指標のみで結論を出してはいけない
+- 必ず複数要素（セクター・マクロ・トレンド等）で総合判断する
+- 個別ではなく相対評価（強い/普通/弱い）で判断する
 
 【ユーザープロファイル】
 - 投資スタイル：{user_profile.get('investment_style', '中期')}
@@ -2389,6 +2435,45 @@ JSONのみ出力（前置き・説明文禁止）。
 - 分析スタイル：{user_profile.get('analysis_style', 'バランス型')}
 - 投資経験：{user_profile.get('experience', '中級')}
 
+【取引種別ごとの評価基準】
+・現物取引：損切り閾値やや緩め（-15%〜-20%）、長期保有も選択肢
+・信用取引：追証リスク考慮、損切り厳しめ（-8%〜-10%）
+・空売り：上昇が損失、損切りライン必須設定
+
+【保有銘柄】
+{holdings_blocks}
+"""
+
+    # 期間別プロンプト追加
+    if period == "短期":
+        prompt += f"""
+【市場環境（短期重視）】
+- 日経平均トレンド：{macro.get('nikkei_trend')}
+- VIX：{macro.get('vix')}
+- 騰落レシオ目安：相場の強弱を判断
+
+【診断期間】短期（数日〜2週間）
+
+【最重要ルール（短期特化）】
+- 資金流入・需給を最優先
+- セクターの強弱を必ず判定
+- 出来高・値動きから資金流入を推定
+- トレンドより「今強いか」を重視
+- 損益は完全無視（バイアス排除）
+
+【判断の優先順位】
+1. 資金流入（最重要）
+2. セクター強度
+3. 需給（出来高・値動き）
+4. 短期トレンド（MA5）
+5. テクニカル（RSI・MACD）
+
+【禁止】
+- ファンダメンタルで判断
+- 長期目線の説明
+"""
+    elif period == "中期":
+        prompt += f"""
 【市場環境】
 - 日経平均トレンド：{macro.get('nikkei_trend')}
 - VIX：{macro.get('vix')}（20以下=安定／30以上=恐怖状態）
@@ -2397,78 +2482,71 @@ JSONのみ出力（前置き・説明文禁止）。
 - S&P500トレンド：{macro.get('sp500_trend')}
 - 金利差(10Y-2Y)：{macro.get('yield_spread')}
 
+【診断期間】中期（1〜3ヶ月）
+
+【最重要ルール（中期）】
+- セクターと資金流入を最優先
+- トレンド（MA25）を重視
+- マクロ（為替・金利）を必ず考慮
+- テクニカルは補助
+
 【判断の優先順位】
 1. セクター強度（最重要）
-2. 資金流入/流出（テーマ）
-3. マクロ環境（為替・金利）
-4. トレンド（MA）
-5. テクニカル（RSI・MACD）
-6. 損益（参考程度）
-
-【推定ルール（データが無い場合）】
-- セクター強度：ニュース、指数トレンド、マクロ（原油・金利・為替）から推定し、必ず「strong/neutral/weak」で評価する
-- 資金流入：出来高の増減（データがあれば）、なければ直近の値動きの強弱とニュースから「inflow/neutral/outflow」で推定する
-- トレンド：MA25を基準に「uptrend/downtrend/sideways」で必ず判定する
-- 推定した場合は、必ず「推定」と明記すること
+2. 資金流入
+3. マクロ（為替・金利）
+4. トレンド（MA25）
+5. テクニカル
 
 【禁止】
-- RSIやMACDのみで結論を出す
-- データが無いのに断定する（必ず推定と書く）
+- RSI単体判断
+"""
+    else:  # 長期
+        prompt += f"""
 
-【セクター情報】
-- セクター：{sector}
-- 業種：{industry}
-- セクター騰落率（本日）：{macro.get('sector_trend', '不明')}
-  ※プラスなら資金流入、マイナスなら資金流出の目安
+【長期ファンダ評価ルール】
+- 直近12ヶ月（TTM）の数値は参考とし、単独で結論を出してはいけない
+- 業績の持続性（3年〜5年のトレンド）を最優先に評価する
+- TTMが大きく悪化している場合は、一時的要因の可能性を必ず検討する
+- 一時要因が不明な場合は「リスクあり」として評価する
 
-【保有銘柄】
-{holdings_blocks}
+【市場環境（長期・マクロのみ）】
+- 日経平均トレンド：{macro.get('nikkei_trend')}
+- 米10年債：{macro.get('us10y')}%（金利環境）
+- ドル円：{macro.get('usd_jpy')}円
+- 金利差(10Y-2Y)：{macro.get('yield_spread')}（景気後退シグナル）
 
-【診断期間】
-- 対象期間：{period}
+【診断期間】長期（6ヶ月以上）
 
-※短期（数日〜2週間）
-資金フローと需給を最優先とし、セクター強度と資金流入を重視する。
-テクニカル（RSI・MACD）は補助として使用する。
+【最重要ルール（長期特化）】
+- ファンダメンタルを最優先
+- 成長性・収益性・競争優位を評価
+- バリュエーションを必ず考慮
+- マクロ環境（景気・金利）を重視
+- テクニカルは使用禁止
 
-※中期（1〜3ヶ月）
-セクター強度と市場の資金流入を最優先とし、
-トレンド（MA）とマクロ環境（為替・金利・原油）を重視する。
-ファンダメンタルは補助的に評価し、テクニカルは参考程度とする。
+【判断の優先順位】
+1. 成長性（売上・利益）
+2. 収益性（ROEなど）
+3. バリュエーション（PER等）
+4. セクター構造
+5. マクロ環境
 
-※長期（6ヶ月以上）
-ファンダメンタル（成長性・収益性）とバリュエーションを最優先とし、
-マクロ環境とセクター構造を評価する。
-テクニカル指標は原則として判断に使用しない。
+【禁止】
+- RSI・MACDなどのテクニカル使用
+- 短期値動きの言及
+"""
 
+    prompt += f"""
 【診断指示】
-{period}の観点で各銘柄を診断してください。：
+{period}の観点で各銘柄を診断してください：
 - verdict：継続保有 / 買い増し / 利確推奨 / 損切り推奨
 - probability：継続保有・買い増し・利確・損切りの確率（合計100）
 - confidence：high / medium / low
 - price_strategy：利確目安価格・損切り目安価格・根拠
-- positive_points：保有継続・買い増しの根拠）
+- positive_points：保有継続・買い増しの根拠
 - negative_points：リスク・売却根拠
 - macro_impact：市場環境がこの銘柄に与える影響
 - summary：5〜8文の詳細サマリー（数値引用必須）
-
-【取引種別ごとの評価基準】
-各銘柄の trade_type に応じて以下の基準で評価すること：
-
-・現物取引の場合：
-  - 損失は投資額までに限定される
-  - 長期保有も選択肢に入れて評価する
-  - 損切り推奨の閾値はやや緩め（-15%〜-20%程度）
-
-・信用取引の場合：
-  - 追証リスクを必ず考慮する
-  - 損切り推奨の閾値は厳しめ（-8%〜-10%程度）
-  - レバレッジによる損失拡大リスクを明記する
-
-・空売りポジションの場合：
-  - 上昇が損失になることを必ず考慮する
-  - 損失は理論上無限大になるため損切りラインを必ず設定する
-  - 買い戻しタイミングを price_strategy に明記する
 
 必ずJSONのみで返してください：
 {{
@@ -2485,10 +2563,10 @@ JSONのみ出力（前置き・説明文禁止）。
       "profit_loss_pct": 0,
       "verdict": "継続保有 / 買い増し / 利確推奨 / 損切り推奨",
       "probability": {{
-        "hold":     {{"value": 継続保有確率(整数), "reason": "2〜3文で具体的に"}},
-        "add":      {{"value": 買い増し確率(整数), "reason": "2〜3文で具体的に"}},
-        "take_profit": {{"value": 利確確率(整数), "reason": "2〜3文で具体的に"}},
-        "cut_loss": {{"value": 損切り確率(整数), "reason": "2〜3文で具体的に"}}
+        "hold":        {{"value": 継続保有確率(整数), "reason": "2〜3文で具体的に"}},
+        "add":         {{"value": 買い増し確率(整数), "reason": "2〜3文で具体的に"}},
+        "take_profit": {{"value": 利確確率(整数),    "reason": "2〜3文で具体的に"}},
+        "cut_loss":    {{"value": 損切り確率(整数),  "reason": "2〜3文で具体的に"}}
       }},
       "confidence": {{"value": "high/medium/low", "reason": "2文で"}},
       "price_strategy": {{
@@ -2496,15 +2574,15 @@ JSONのみ出力（前置き・説明文禁止）。
         "stop_loss":   {{"value": 0, "reason": "3〜4文で根拠を説明"}}
       }},
       "macro_impact": {{"value": "positive/negative/neutral", "reason": "この銘柄への市場環境の影響を2〜3文で"}},
-      "positive_points": ["根拠1", "根拠2", "根拠3"],
-      "negative_points": ["リスク1", "リスク2", "リスク3"],
-      "summary": "5〜8文の詳細サマリー"
+      "positive_points": ["根拠1（指標名と数値を含め2文以上）", "根拠2", "根拠3"],
+      "negative_points": ["リスク1（指標名と数値を含め2文以上）", "リスク2", "リスク3"],
+      "summary": "5〜8文の詳細サマリー（数値引用必須）"
     }}
   ],
   "portfolio_analysis": {{
     "sector_balance": "セクターバランスの詳細コメント（3〜4文）",
     "concentration_risk": "集中リスクの詳細コメント（3〜4文）",
-    "overall_comment": "ポートフォリオ全体の総評（5〜8文、診断期間を考慮）"
+    "overall_comment": "ポートフォリオ全体の総評（5〜8文、{period}の観点で）"
   }}
 }}
 """
@@ -2528,3 +2606,20 @@ JSONのみ出力（前置き・説明文禁止）。
         return {"error": "AI分析結果の解析に失敗しました。もう一度お試しください。"}
     except Exception as e:
         return {"error": f"診断に失敗しました：{str(e)}"}
+
+@app.get("/health")
+def health_check():
+    results = {}
+    # yfinanceチェック
+    try:
+        t = yf.Ticker("^N225")
+        hist = t.history(period="1d")
+        results["yfinance"] = "ok" if not hist.empty else "error"
+    except:
+        results["yfinance"] = "error"
+    # J-Quantsチェック
+    try:
+        results["jquants"] = "ok" if len(stocks_master) > 0 else "error"
+    except:
+        results["jquants"] = "error"
+    return results

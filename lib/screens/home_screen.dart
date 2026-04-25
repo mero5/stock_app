@@ -12,6 +12,10 @@ import 'schedule_screen.dart';
 import 'market_screen.dart';
 import 'settings_screen.dart';
 import 'portfolio_screen.dart';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
+import '../config/constants.dart';
+import '../widgets/api_error_banner.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -26,11 +30,38 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _editMode = false;
   List<String> _selectedCodes = [];
   bool _isLoading = true;
+  bool _apiAvailable = true;
+  String _apiErrorMsg = '';
 
   @override
   void initState() {
     super.initState();
+    _checkApiHealth();
     loadFavorites();
+  }
+
+  Future<void> _checkApiHealth() async {
+    try {
+      final res = await http
+          .get(Uri.parse("${Constants.backendUrl}/health"))
+          .timeout(const Duration(seconds: 10));
+      final data = jsonDecode(res.body);
+      final yf = data['yfinance'] == 'ok';
+      final jq = data['jquants'] == 'ok';
+      if (!yf || !jq) {
+        setState(() {
+          _apiAvailable = false;
+          _apiErrorMsg =
+              [if (!yf) 'Yahoo Finance', if (!jq) 'J-Quants'].join('・') +
+              'に接続できません';
+        });
+      }
+    } catch (e) {
+      setState(() {
+        _apiAvailable = false;
+        _apiErrorMsg = 'サーバーに接続できません';
+      });
+    }
   }
 
   Future<void> loadFavorites() async {
@@ -392,73 +423,77 @@ class _HomeScreenState extends State<HomeScreen> {
     if (_isLoading) {
       return const Center(child: CircularProgressIndicator());
     }
-    if (watchList.isEmpty) {
-      return const Center(child: Text("銘柄を追加してください"));
-    }
     return Column(
       children: [
-        Expanded(
-          child: ListView.builder(
-            itemCount: watchList.length,
-            itemBuilder: (context, index) {
-              final stock = watchList[index];
-              final isSelected = _selectedCodes.contains(stock.displayCode);
-              return ListTile(
-                leading: _editMode
-                    ? Checkbox(
-                        value: isSelected,
-                        onChanged: (_) => _toggleSelect(stock.displayCode),
-                      )
-                    : const Icon(Icons.show_chart),
-                title: Text(stock.name),
-                subtitle: Text(
-                  // 5桁の日本株コードは末尾の0を除いて4桁で表示
-                  RegExp(r'^\d{5}$').hasMatch(stock.displayCode)
-                      ? stock.displayCode.substring(0, 4)
-                      : stock.displayCode,
-                ),
-                trailing: _editMode
-                    ? null
-                    : Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        children: [
-                          Text(
-                            stock.price != "---" ? "¥${stock.price}" : "---",
-                            style: const TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          if (stock.change.isNotEmpty)
+        // APIエラーバナー（エラーの時だけ表示）
+        if (!_apiAvailable) ApiErrorBanner(message: _apiErrorMsg),
+
+        // ウォッチリスト
+        if (watchList.isEmpty)
+          const Expanded(child: Center(child: Text("銘柄を追加してください")))
+        else
+          Expanded(
+            child: ListView.builder(
+              itemCount: watchList.length,
+              itemBuilder: (context, index) {
+                final stock = watchList[index];
+                final isSelected = _selectedCodes.contains(stock.displayCode);
+                return ListTile(
+                  leading: _editMode
+                      ? Checkbox(
+                          value: isSelected,
+                          onChanged: (_) => _toggleSelect(stock.displayCode),
+                        )
+                      : const Icon(Icons.show_chart),
+                  title: Text(stock.name),
+                  subtitle: Text(
+                    RegExp(r'^\d{5}$').hasMatch(stock.displayCode)
+                        ? stock.displayCode.substring(0, 4)
+                        : stock.displayCode,
+                  ),
+                  trailing: _editMode
+                      ? null
+                      : Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
                             Text(
-                              "${stock.change}  ${stock.changePct}",
-                              style: TextStyle(
-                                fontSize: 11,
-                                color: stock.isPositive
-                                    ? Colors.red
-                                    : Colors.green,
+                              stock.price != "---" ? "¥${stock.price}" : "---",
+                              style: const TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
                               ),
                             ),
-                        ],
-                      ),
-                onTap: _editMode
-                    ? () => _toggleSelect(stock.displayCode)
-                    : () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => DetailScreen(
-                              code: stock.displayCode,
-                              name: stock.name,
+                            if (stock.change.isNotEmpty)
+                              Text(
+                                "${stock.change}  ${stock.changePct}",
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: stock.isPositive
+                                      ? Colors.red
+                                      : Colors.green,
+                                ),
+                              ),
+                          ],
+                        ),
+                  onTap: _editMode
+                      ? () => _toggleSelect(stock.displayCode)
+                      : () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => DetailScreen(
+                                code: stock.displayCode,
+                                name: stock.name,
+                              ),
                             ),
-                          ),
-                        );
-                      },
-              );
-            },
+                          );
+                        },
+                );
+              },
+            ),
           ),
-        ),
+
         if (_editMode && _selectedCodes.isNotEmpty)
           Padding(
             padding: const EdgeInsets.all(16),
@@ -545,10 +580,16 @@ class _HomeScreenState extends State<HomeScreen> {
         children: [
           _buildHomeTab(),
           const YoutubeScreen(),
-          const ScheduleScreen(),
-          const MarketScreen(),
+          ScheduleScreen(
+            apiAvailable: _apiAvailable,
+            apiErrorMsg: _apiErrorMsg,
+          ),
+          MarketScreen(apiAvailable: _apiAvailable, apiErrorMsg: _apiErrorMsg),
           const SettingsScreen(),
-          const PortfolioScreen(),
+          PortfolioScreen(
+            apiAvailable: _apiAvailable,
+            apiErrorMsg: _apiErrorMsg,
+          ),
         ],
       ),
       bottomNavigationBar: BottomNavigationBar(

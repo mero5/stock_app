@@ -1,9 +1,16 @@
 import 'package:flutter/material.dart';
 import '../services/stock_service.dart';
 import '../services/watchlist_service.dart';
+import '../widgets/api_error_banner.dart';
 
 class ScheduleScreen extends StatefulWidget {
-  const ScheduleScreen({super.key});
+  final bool apiAvailable;
+  final String apiErrorMsg;
+  const ScheduleScreen({
+    super.key,
+    this.apiAvailable = true,
+    this.apiErrorMsg = '',
+  });
 
   @override
   State<ScheduleScreen> createState() => _ScheduleScreenState();
@@ -106,17 +113,24 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
           ),
         ],
       ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : SingleChildScrollView(
-              child: Column(
-                children: [
-                  _buildCalendar(),
-                  const Divider(height: 1),
-                  _buildEventList(),
-                ],
-              ),
-            ),
+      body: Column(
+        children: [
+          if (!widget.apiAvailable) ApiErrorBanner(message: widget.apiErrorMsg),
+          Expanded(
+            child: _isLoading
+                ? const Center(child: CircularProgressIndicator())
+                : SingleChildScrollView(
+                    child: Column(
+                      children: [
+                        _buildCalendar(),
+                        const Divider(height: 1),
+                        _buildEventList(),
+                      ],
+                    ),
+                  ),
+          ),
+        ],
+      ),
     );
   }
 
