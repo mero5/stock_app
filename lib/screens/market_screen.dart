@@ -208,10 +208,9 @@ class _MarketScreenState extends State<MarketScreen>
           ...(() {
             final sorted = List<Map<String, dynamic>>.from(sectors)
               ..sort(
-                (a, b) => (b['trend'] as num? ?? b['trend_5d'] as num? ?? 0)
-                    .compareTo(
-                      a['trend'] as num? ?? a['trend_5d'] as num? ?? 0,
-                    ),
+                (a, b) => (b['trend_5d'] as num? ?? 0).compareTo(
+                  a['trend_5d'] as num? ?? 0,
+                ),
               );
             return sorted.map((s) => _sectorRow(s, use5d: true));
           })(),

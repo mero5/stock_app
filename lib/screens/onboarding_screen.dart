@@ -25,7 +25,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
       color: Colors.purple,
       title: 'AI分析・相談',
       description: 'AIがテクニカル・ファンダメンタルを分析。\n買い・売りの判断をサポートします。',
-      highlights: ['総合スコアで投資判断を補助', '短期・中期・長期で相談可能', 'ウォッチリスト全銘柄を一括診断'],
+      highlights: ['短期・中期・長期で相談可能'],
     ),
     _OnboardingPage(
       icon: Icons.calendar_month,

@@ -118,16 +118,18 @@ class _PortfolioScreenState extends State<PortfolioScreen> {
       });
 
       // ③ リクエストボディにperiodとsector_dataを追加
-      final res = await http.post(
-        Uri.parse("${Constants.backendUrl}/portfolio/diagnosis"),
-        headers: {"Content-Type": "application/json"},
-        body: jsonEncode({
-          "user_profile": _userProfile ?? {},
-          "holdings": validHoldings,
-          "period": _selectedPeriod,
-          "sector_data": sectorData,
-        }),
-      );
+      final res = await http
+          .post(
+            Uri.parse("${Constants.backendUrl}/portfolio/diagnosis"),
+            headers: {"Content-Type": "application/json"},
+            body: jsonEncode({
+              "user_profile": _userProfile ?? {},
+              "holdings": validHoldings,
+              "period": _selectedPeriod,
+              "sector_data": sectorData,
+            }),
+          )
+          .timeout(const Duration(seconds: 120));
       final data = jsonDecode(res.body) as Map<String, dynamic>;
       setState(() => _result = data);
     } catch (e) {
@@ -827,7 +829,7 @@ class _PortfolioScreenState extends State<PortfolioScreen> {
 
     final plPct = h['profit_loss_pct'];
     final plYen = h['profit_loss_yen'];
-    final isProfit = plPct != null && (plPct as num) >= 0;
+    final isProfit = plPct != null && plPct is num && (plPct as num) >= 0;
 
     final prob = h['probability'] as Map<String, dynamic>? ?? {};
     final confidence = h['confidence'] as Map<String, dynamic>? ?? {};
@@ -908,10 +910,10 @@ class _PortfolioScreenState extends State<PortfolioScreen> {
                   '¥${_fmt(h['current_price'])}',
                   Colors.black87,
                 ),
-                if (plPct != null)
+                if (plPct != null && plPct is num)
                   _infoChip(
                     '損益',
-                    '${(plPct as num) >= 0 ? '+' : ''}${plPct.toStringAsFixed(1)}%'
+                    '${(plPct as num) >= 0 ? '+' : ''}${(plPct as num).toStringAsFixed(1)}%'
                         '${plYen != null ? '  ¥${_fmtInt(plYen)}' : ''}',
                     isProfit ? Colors.red : Colors.green,
                   ),
@@ -1286,6 +1288,7 @@ class _PortfolioScreenState extends State<PortfolioScreen> {
 
   String _fmtInt(dynamic val) {
     if (val == null) return '---';
+    if (val is String) return val;
     final n = (val as num).toInt();
     return n.toString().replaceAllMapped(
       RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
