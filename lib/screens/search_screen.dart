@@ -3,6 +3,8 @@ import '../models/stock.dart';
 import '../services/stock_service.dart';
 import '../services/watchlist_service.dart';
 import 'dart:async';
+import 'package:provider/provider.dart';
+import '../viewmodels/detail_viewmodel.dart';
 
 class SearchScreen extends StatefulWidget {
   final Function(List<String>) onAdd;
