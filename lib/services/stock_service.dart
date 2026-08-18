@@ -293,8 +293,13 @@ class StockService {
           'sector_data': sectorData ?? {},
         }),
       );
+      debugPrint('=== AI診断レスポンス ===');
+      debugPrint('ステータス: ${res.statusCode}');
+      debugPrint('ボディ: ${res.body}');
       return jsonDecode(res.body) as Map<String, dynamic>;
     } catch (e) {
+      debugPrint('=== AI診断通信エラー ===');
+      debugPrint('エラー内容: $e');
       return {'error': e.toString()};
     }
   }

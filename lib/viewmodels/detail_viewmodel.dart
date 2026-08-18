@@ -184,6 +184,9 @@ class DetailViewModel extends ChangeNotifier {
     } catch (e) {
       progressTimer.cancel();
       debugPrint('AI分析エラー: $e');
+      aiResult = {'error': '予期せぬエラーが発生しました。しばらく待ってからもう一度お試しください。'};
+      analysisProgress = 0.0;
+      notifyListeners();
     } finally {
       isAnalyzing = false;
       notifyListeners();

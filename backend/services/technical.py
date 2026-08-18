@@ -7,6 +7,17 @@ from services.cache import (
     cache_get, cache_set,
     market_cache_table, stock_cache_table
 )
+import math
+
+
+def sanitize(obj):
+    if isinstance(obj, dict):
+        return {k: sanitize(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [sanitize(v) for v in obj]
+    elif isinstance(obj, float) and (math.isnan(obj) or math.isinf(obj)):
+        return None
+    return obj
 
 
 # ===================================================
@@ -15,7 +26,11 @@ from services.cache import (
 def safe_float(val, digits=2):
     """安全にfloatに変換。失敗したらNoneを返す"""
     try:
-        return round(float(val), digits)
+        v = float(val)
+        # nan・infはNoneに変換
+        if v != v or v == float('inf') or v == float('-inf'):
+            return None
+        return round(v, digits)
     except:
         return None
 
@@ -85,8 +100,9 @@ def get_macro_data() -> dict:
         macro["yield_spread"] = None
 
     # 15分キャッシュ
-    cache_set(market_cache_table, {'cache_key': 'macro'}, macro, ttl_minutes=15)
-    return macro
+    clean_macro = sanitize(macro)
+    cache_set(market_cache_table, {'cache_key': 'macro'}, clean_macro, ttl_minutes=15)
+    return clean_macro
 
 
 def get_nikkei225_breadth() -> dict:
@@ -122,8 +138,9 @@ def get_nikkei225_breadth() -> dict:
             "advance_decline_ratio": ratio,
         }
         # 8時間キャッシュ（翌営業日まで有効）
-        cache_set(market_cache_table, {'cache_key': 'breadth'}, result, ttl_minutes=480)
-        return result
+        clean_result = sanitize(result)
+        cache_set(market_cache_table, {'cache_key': 'breadth'}, clean_result, ttl_minutes=480)
+        return clean_result
     except:
         return {
             "advancers": None,
@@ -140,7 +157,7 @@ def get_technical_data(ticker_code: str) -> dict:
     cached = cache_get(stock_cache_table, {'code': ticker_code, 'cache_type': 'technical'})
     if cached:
         print(f"テクニカル {ticker_code}: キャッシュヒット")
-        return cached
+        return sanitize(cached)
 
     print(f"テクニカル {ticker_code}: yfinanceから計算")
     try:
@@ -257,10 +274,11 @@ def get_technical_data(ticker_code: str) -> dict:
             "momentum_6m":    momentum_6m,
         }
         # 4時間キャッシュ
+        clean_result = sanitize(result)
         cache_set(stock_cache_table,
                   {'code': ticker_code, 'cache_type': 'technical'},
-                  result, ttl_minutes=240)
-        return result
+                  clean_result, ttl_minutes=240)
+        return clean_result
     except Exception as e:
         print(f"テクニカル計算エラー: {e}")
         return {}
@@ -273,8 +291,8 @@ def get_fundamental_data(ticker_code: str) -> dict:
     # キャッシュ確認
     cached = cache_get(stock_cache_table, {'code': ticker_code, 'cache_type': 'fundamental'})
     if cached:
-        print(f"ファンダ {ticker_code}: キャッシュヒット")
-        return cached
+      print(f"ファンダ {ticker_code}: キャッシュヒット")
+      return sanitize(cached)
 
     print(f"ファンダ {ticker_code}: yfinanceから取得")
     try:
@@ -300,27 +318,31 @@ def get_fundamental_data(ticker_code: str) -> dict:
 
         # 年次トレンドデータ（長期診断用）
         try:
+            import math as _math
             fin = t.financials
             if 'Total Revenue' in fin.index:
                 rev = fin.loc['Total Revenue'].sort_index()
                 result["revenue_trend"] = {
-                    str(k.year): round(float(v) / 1e8, 1)
+                    str(k.year): safe_float(float(v) / 1e8, digits=1)
                     for k, v in rev.items()
+                    if v is not None and not _math.isnan(float(v))
                 }
             if 'Operating Income' in fin.index:
                 op = fin.loc['Operating Income'].sort_index()
                 result["op_income_trend"] = {
-                    str(k.year): round(float(v) / 1e8, 1)
+                    str(k.year): safe_float(float(v) / 1e8, digits=1)
                     for k, v in op.items()
+                    if v is not None and not _math.isnan(float(v))
                 }
         except Exception as e:
             print(f"年次トレンド取得エラー: {e}")
 
         # 24時間キャッシュ（ファンダは変化が少ない）
+        clean_result = sanitize(result)
         cache_set(stock_cache_table,
                   {'code': ticker_code, 'cache_type': 'fundamental'},
-                  result, ttl_minutes=1440)
-        return result
+                  clean_result, ttl_minutes=1440)
+        return clean_result
     except Exception as e:
         print(f"ファンダ取得エラー: {e}")
         return {}

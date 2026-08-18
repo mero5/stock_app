@@ -1,3 +1,4 @@
+from fastapi.responses import Response
 import json
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
@@ -9,7 +10,8 @@ from services.technical import (
     get_earnings_alert, fmt,
     build_short_prompt, build_medium_prompt, build_long_prompt
 )
-
+import math
+from fastapi.responses import JSONResponse
 
 router = APIRouter()
 openai_client = None
@@ -20,6 +22,27 @@ def clean_value(v):
     if isinstance(v, float) and math.isnan(v):
         return None
     return v
+
+
+def sanitize(obj):
+    """dictやlistの中のnanをNoneに再帰的に変換する"""
+    import math
+    if isinstance(obj, dict):
+        return {k: sanitize(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [sanitize(v) for v in obj]
+    elif isinstance(obj, float):
+        if math.isnan(obj) or math.isinf(obj):
+            print(f"sanitize: nan/inf を None に変換")
+            return None
+        return obj
+    elif isinstance(obj, int):
+        return obj
+    elif obj != obj:  # NaNチェック（別の方法）
+        print(f"sanitize: != チェックで nan 検出")
+        return None
+    return obj
+
 
 # ===================================================
 # AI分析API（テクニカル・ファンダ・ニュース）
@@ -100,7 +123,7 @@ async def get_ai_analysis(code: str):
                             "content": str(summaries_en)
                         }
                     ],
-                    max_tokens=1000,
+                    max_tokens=3000,
                 )
                 raw_summaries = summary_res.choices[0].message.content.strip()
                 raw_summaries = raw_summaries.replace("```json", "").replace("```", "").strip()
@@ -300,7 +323,7 @@ PER: {per}倍 / PBR: {pbr}倍 / ROE: {roe}
                 {"role": "system", "content": "あなたは日本株・米国株に詳しい投資アドバイザーです。必ずJSON形式のみで返してください。"},
                 {"role": "user",   "content": prompt}
             ],
-            max_tokens=1000,
+            max_tokens=3000,
         )
         raw = res.choices[0].message.content.strip()
         raw = raw.replace("```json", "").replace("```", "").strip()
@@ -425,19 +448,26 @@ async def swing_analysis(request: Request):
         result["_period"]       = period
         result["_ticker"]       = ticker_code
         result["_prompt"]       = prompt
-        result["_tech_data"]    = tech
-        result["_fund_data"]    = fund
-        result["_macro_data"]   = macro
-        result["_breadth_data"] = breadth
-        return result
+        result["_tech_data"]    = sanitize(tech)
+        result["_fund_data"]    = sanitize(fund)
+        result["_macro_data"]   = sanitize(macro)
+        result["_breadth_data"] = sanitize(breadth)
+        safe = sanitize(result)
+        from fastapi.responses import Response
+        return Response(
+            content=json.dumps(safe, ensure_ascii=False, default=lambda x: None),
+            media_type="application/json"
+        )
 
     except json.JSONDecodeError as e:
-        return {
-            "error": "AI分析結果の解析に失敗しました。もう一度お試しください。",
-            "error_detail": f"JSONパースエラー: {str(e)}",
-            "error_type": "parse_error",
-            "raw": raw,
-        }
+        return Response(
+            content=json.dumps({
+                "error": "AI分析結果の解析に失敗しました。もう一度お試しください。",
+                "error_detail": f"JSONパースエラー: {str(e)}",
+                "error_type": "parse_error",
+            }, ensure_ascii=False),
+            media_type="application/json"
+        )
     except Exception as e:
         err_str = str(e).lower()
         if "rate limit" in err_str or "ratelimit" in err_str:
@@ -458,11 +488,14 @@ async def swing_analysis(request: Request):
         else:
             msg = "予期せぬエラーが発生しました。しばらく待ってからもう一度お試しください。"
             etype = "unknown"
-        return {
-            "error": msg,
-            "error_type": etype,
-            "error_detail": str(e),
-        }
+        return Response(
+            content=json.dumps({
+                "error": msg,
+                "error_type": etype,
+                "error_detail": str(e),
+            }, ensure_ascii=False),
+            media_type="application/json"
+        )
 
 
 @router.post("/portfolio/diagnosis")
@@ -751,9 +784,43 @@ JSONのみ出力（前置き・説明文禁止）。
         raw = raw.replace("```json", "").replace("```", "").strip()
         result = json.loads(raw)
         result["_prompt"] = prompt
-        result["_holdings_data"] = enriched
-        return result
+        result["_holdings_data"] = sanitize(enriched)
+        safe = sanitize(result)
+        from fastapi.responses import Response
+        return Response(
+            content=json.dumps(safe, ensure_ascii=False, default=lambda x: None),
+            media_type="application/json"
+        )
+        
     except json.JSONDecodeError as e:
-        return {"error": "AI分析結果の解析に失敗しました。もう一度お試しください。"}
+        return JSONResponse(content={
+            "error": "AI分析結果の解析に失敗しました。もう一度お試しください。",
+            "error_detail": f"JSONパースエラー: {str(e)}",
+            "error_type": "parse_error",
+            "raw": raw,
+        })
     except Exception as e:
-        return {"error": f"診断に失敗しました：{str(e)}"}
+        err_str = str(e).lower()
+        if "rate limit" in err_str or "ratelimit" in err_str:
+            msg = "AI分析の利用制限に達しました。しばらく待ってからもう一度お試しください。"
+            etype = "rate_limit"
+        elif "timeout" in err_str:
+            msg = "AI分析がタイムアウトしました。サーバーが混雑しています。時間をおいて再度お試しください。"
+            etype = "timeout"
+        elif "connection" in err_str or "network" in err_str:
+            msg = "AIサーバーに接続できませんでした。ネットワーク状況を確認してください。"
+            etype = "connection"
+        elif "yfinance" in err_str or "download" in err_str:
+            msg = "株価データの取得に失敗しました。銘柄コードを確認してください。"
+            etype = "data_fetch"
+        elif "dynamodb" in err_str or "no region" in err_str:
+            msg = "データベースへの接続に失敗しました。管理者にお問い合わせください。"
+            etype = "database"
+        else:
+            msg = "予期せぬエラーが発生しました。しばらく待ってからもう一度お試しください。"
+            etype = "unknown"
+        return JSONResponse(content={
+            "error": msg,
+            "error_type": etype,
+            "error_detail": str(e),
+        })
