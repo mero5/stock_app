@@ -5,6 +5,7 @@ import jpholiday
 import exchange_calendars as xcals
 from fastapi import APIRouter, Request
 from services.technical import get_nikkei225_breadth
+from services.cache import cache_get, cache_set, market_cache_table
 
 
 router = APIRouter()
@@ -185,6 +186,51 @@ def get_market_events(year: int, month: int):
             })
 
     return results
+
+
+# ===================================================
+# 直近のマーケットイベントAPI
+# ===================================================
+@router.get("/market/upcoming")
+def get_upcoming_events(months: int = 6):
+    """
+    今日以降のマーケットイベントをまとめて返す。
+
+    スケジュール画面の「直近の予定」で使う。
+    「FOMCの次の開催日はいつか」を月をめくらずに確認できるようにするため、
+    数ヶ月分をまとめて1回のリクエストで返す。
+
+    月ごとの計算（祝日・月齢・SQ等）はそこそこ重いので12時間キャッシュする。
+    """
+    import datetime
+
+    months = max(1, min(int(months or 6), 12))
+    today = datetime.date.today()
+    cache_key = {'cache_key': f'upcoming_{months}_{today}'}
+
+    cached = cache_get(market_cache_table, cache_key)
+    if cached and isinstance(cached.get("events"), list):
+        print(f"直近イベント: キャッシュヒット（{months}ヶ月）")
+        return cached["events"]
+
+    results = []
+    year, month = today.year, today.month
+    for _ in range(months):
+        try:
+            results.extend(get_market_events(year, month))
+        except Exception as e:
+            print(f"直近イベント取得エラー {year}-{month}: {e}")
+        month += 1
+        if month > 12:
+            month = 1
+            year += 1
+
+    today_str = str(today)
+    upcoming = [e for e in results if str(e.get("date", "")) >= today_str]
+    upcoming.sort(key=lambda e: e["date"])
+
+    cache_set(market_cache_table, cache_key, {"events": upcoming}, ttl_minutes=720)
+    return upcoming
 
 
 # ===================================================

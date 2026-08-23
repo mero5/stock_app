@@ -12,8 +12,9 @@ from services.technical import (
     get_earnings_alert, fmt,
     build_short_prompt, build_medium_prompt, build_long_prompt,
     normalize_priority, DEFAULT_PERIOD_DAYS,
-    resolve_sector_trend
+    resolve_sector_trend, normalize_checks, PROMPT_VERSION
 )
+from services.predictions import save_prediction, resolve_horizon_days
 import math
 from fastapi.responses import JSONResponse
 
@@ -88,13 +89,16 @@ def error_response(payload: dict) -> Response:
     )
 
 
-def call_openai_json(prompt: str, system: str, max_tokens: int = 4000) -> dict:
+def call_openai_json(prompt: str, system: str, max_tokens: int = 4000):
     """
     OpenAIを呼んでJSONを取得する共通処理。
 
     ・response_format で JSON 以外を返させない
     ・max_tokens 切れ（finish_reason == "length"）を専用エラーで検出する
       → これを見逃すと「途中で切れたJSON」をパースして毎回失敗していた
+
+    戻り値は (パース結果, トークン使用量)。
+    使用量は予測記録に残して実コストを追えるようにする。
     """
     res = openai_client.chat.completions.create(
         model="gpt-4o",
@@ -112,7 +116,15 @@ def call_openai_json(prompt: str, system: str, max_tokens: int = 4000) -> dict:
         )
     raw = (choice.message.content or "").strip()
     raw = raw.replace("```json", "").replace("```", "").strip()
-    return json.loads(raw)
+
+    usage = {}
+    if getattr(res, "usage", None):
+        usage = {
+            "prompt_tokens":     res.usage.prompt_tokens,
+            "completion_tokens": res.usage.completion_tokens,
+            "model":             res.model,
+        }
+    return json.loads(raw), usage
 
 
 # ===================================================
@@ -423,10 +435,23 @@ async def swing_analysis(request: Request):
     period = body.get("period", "短期")  # 短期 / 中期 / 長期
 
     # ユーザープロファイル
+    # 設定画面で保存している項目をすべてプロンプトに渡す。
+    # 以前は risk_level と analysis_style の2つしか渡しておらず、
+    # 残りの設定が個別銘柄の診断に反映されていなかった。
     user_profile = {
-        "risk_level":     body.get("risk_level", "中"),
-        "analysis_style": body.get("analysis_style", "バランス型"),
+        "risk_level":       body.get("risk_level")       or "中",
+        "analysis_style":   body.get("analysis_style")   or "バランス型",
+        "investment_style": body.get("investment_style") or "中期",
+        "trade_type":       body.get("trade_type")       or "現物のみ",
+        "short_selling":    body.get("short_selling")    or "しない",
+        "experience":       body.get("experience")       or "中級",
+        "market":           body.get("market")           or "両方",
+        "concentration":    body.get("concentration")    or "分散派",
     }
+
+    # 分析オプション（詳細画面のチェックボックス）
+    # 以前はここを読んでおらず、ON/OFFしても結果が変わらなかった
+    checks = normalize_checks(body.get("checks"))
 
     # 優先順位・期間の日数設定（プロフィール設定で変更可能）
     priority    = normalize_priority(body.get("priority"), period)
@@ -491,14 +516,14 @@ async def swing_analysis(request: Request):
                 name, code, tech, fund, macro, breadth,
                 earnings_alert, news_summary, score, user_profile,
                 sector, industry,
-                priority=priority, period_days=period_days
+                priority=priority, period_days=period_days, checks=checks
             )
         elif period == "中期":
             prompt = build_medium_prompt(
                 name, code, tech, fund, macro, breadth,
                 earnings_alert, news_summary, score, user_profile,
                 sector, industry,
-                priority=priority, period_days=period_days
+                priority=priority, period_days=period_days, checks=checks
             )
         else:
             prompt = build_long_prompt(
@@ -506,18 +531,40 @@ async def swing_analysis(request: Request):
                 breadth=breadth, earnings_alert=earnings_alert,
                 news_summary=news_summary, score=score, user_profile=user_profile,
                 sector=sector, industry=industry,
-                priority=priority, period_days=period_days
+                priority=priority, period_days=period_days, checks=checks
             )
 
         # ── AI呼び出し ──
-        result = call_openai_json(
+        result, usage = call_openai_json(
             prompt,
             system="あなたは日本株専門アナリストです。必ずJSON形式のみで返してください。理由は具体的かつ詳細に記述してください。",
             max_tokens=4000,
         )
+
+        # ── 予測を記録（的中率の測定用）──
+        # 記録に失敗しても分析結果は返す
+        save_prediction(
+            code=code,
+            ticker_code=ticker_code,
+            name=name,
+            period=period,
+            result=result,
+            price=tech.get("price"),
+            horizon_days=resolve_horizon_days(period, period_days),
+            prompt_version=PROMPT_VERSION,
+            checks=checks,
+            user_profile=user_profile,
+            user_id=body.get("userId", ""),
+            usage=usage,
+        )
+
         result["_period"]       = period
         result["_ticker"]       = ticker_code
         result["_prompt"]       = prompt
+        result["_checks"]       = checks
+        result["_user_profile"] = user_profile
+        result["_usage"]        = usage
+        result["_prompt_version"] = PROMPT_VERSION
         result["_tech_data"]    = sanitize(tech)
         result["_fund_data"]    = sanitize(fund)
         result["_macro_data"]   = sanitize(macro)
@@ -819,11 +866,12 @@ JSONのみ出力（前置き・説明文禁止）。
 """
 
     try:
-        result = call_openai_json(
+        result, usage = call_openai_json(
             prompt,
             system="あなたは株式投資の専門アナリストです。必ずJSON形式のみで返してください。",
             max_tokens=4000,
         )
+        result["_usage"] = usage
         result["_prompt"] = prompt
         result["_holdings_data"] = sanitize(enriched)
         safe = sanitize(result)

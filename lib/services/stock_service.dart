@@ -344,6 +344,9 @@ class StockService {
     String period = '短期',
     Map<String, dynamic>? sectorData,
     Map<String, dynamic>? userProfile,
+    String? earningsDate,
+    String? dividendRecordDate,
+    String? userId,
   }) async {
     // 期間に応じた優先順位キーを選択
     final priorityKey = period == '短期'
@@ -376,8 +379,20 @@ class StockService {
               'news': detail['news'] ?? [],
               'checks': checks,
               'sector_data': sectorData ?? {},
+              // 決算日・配当落ち日（決算アラートの判定に使う）
+              'earnings_date': earningsDate ?? '',
+              'dividend_record_date': dividendRecordDate ?? '',
+              // 予測記録をユーザーごとに集計するために送る
+              'userId': userId ?? '',
+              // ユーザープロファイル（設定画面の項目をすべて渡す）
               'risk_level': userProfile?['risk_level'],
               'analysis_style': userProfile?['analysis_style'],
+              'investment_style': userProfile?['investment_style'],
+              'trade_type': userProfile?['trade_type'],
+              'short_selling': userProfile?['short_selling'],
+              'experience': userProfile?['experience'],
+              'market': userProfile?['market'],
+              'concentration': userProfile?['concentration'],
               'priority': userProfile?[priorityKey],
               'period_days': {
                 'short_max': userProfile?['period_short_max_days'],
@@ -421,6 +436,78 @@ class StockService {
       return List<Map<String, dynamic>>.from(data);
     } catch (e) {
       debugPrint('マーケットイベント取得エラー: $e');
+      return [];
+    }
+  }
+
+  // ============================================================
+  // AI予測の成績
+  // ============================================================
+
+  /// AI予測の的中率を取得する
+  ///
+  /// サーバー側は、このAPIが呼ばれたタイミングで
+  /// 判定期限が来た予測をまとめて答え合わせしてから集計を返す。
+  /// そのため初回は少し時間がかかることがある。
+  static Future<Map<String, dynamic>> getAccuracyStats({
+    String userId = '',
+  }) async {
+    try {
+      final res = await http
+          .get(
+            Uri.parse(
+              '${Constants.backendUrl}/stats/accuracy'
+              '?userId=${Uri.encodeComponent(userId)}',
+            ),
+          )
+          .timeout(const Duration(seconds: 120));
+      return _normalizeAiResponse(res);
+    } catch (e) {
+      debugPrint('成績取得エラー: $e');
+      return _networkError(e);
+    }
+  }
+
+  /// AI予測の履歴を取得する
+  ///
+  /// [code] 指定するとその銘柄の履歴だけを返す
+  static Future<List<Map<String, dynamic>>> getPredictionHistory({
+    int limit = 30,
+    String code = '',
+  }) async {
+    try {
+      final res = await http.get(
+        Uri.parse(
+          '${Constants.backendUrl}/stats/predictions'
+          '?limit=$limit&code=${Uri.encodeComponent(code)}',
+        ),
+      );
+      final data = jsonDecode(res.body);
+      return List<Map<String, dynamic>>.from(data['predictions'] ?? []);
+    } catch (e) {
+      debugPrint('予測履歴取得エラー: $e');
+      return [];
+    }
+  }
+
+  /// 今日以降のマーケットイベントをまとめて取得する
+  ///
+  /// スケジュール画面の「直近の予定」で使う。
+  /// 「FOMCの次はいつか」を月をめくらずに確認できるようにするため、
+  /// 数ヶ月分を1回のリクエストで取得する。
+  ///
+  /// [months] 何ヶ月先まで取得するか（最大12）
+  static Future<List<Map<String, dynamic>>> getUpcomingEvents({
+    int months = 6,
+  }) async {
+    try {
+      final res = await http.get(
+        Uri.parse('${Constants.backendUrl}/market/upcoming?months=$months'),
+      );
+      final List data = jsonDecode(res.body);
+      return List<Map<String, dynamic>>.from(data);
+    } catch (e) {
+      debugPrint('直近イベント取得エラー: $e');
       return [];
     }
   }

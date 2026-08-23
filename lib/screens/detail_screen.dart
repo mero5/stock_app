@@ -29,6 +29,8 @@ class _DetailScreenState extends State<DetailScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       context.read<DetailViewModel>().loadDetail(widget.code);
       context.read<DetailViewModel>().loadUserProfile();
+      // 決算日はAI分析に渡すので先に取得しておく
+      context.read<DetailViewModel>().loadEvents(widget.code);
     });
   }
 
@@ -1014,6 +1016,57 @@ class _DetailScreenState extends State<DetailScreen> {
     );
   }
 
+  /// 決算日が近いことを分析ボタンの上に表示する
+  ///
+  /// この決算日はAI分析にも渡していて、決算跨ぎリスクの判断に使われる。
+  /// 「AIが何を見て判断しているか」がユーザーに見えるようにするための表示。
+  Widget _buildEarningsNotice(DetailViewModel vm) {
+    final dateStr = vm.earningsDate;
+    if (dateStr == null) return const SizedBox.shrink();
+
+    final date = DateTime.tryParse(dateStr);
+    if (date == null) return const SizedBox.shrink();
+
+    final now = DateTime.now();
+    final daysTo = date.difference(DateTime(now.year, now.month, now.day)).inDays;
+    if (daysTo < 0) return const SizedBox.shrink();
+
+    // 14日以内は警告色、それより先は控えめな色
+    final isNear = daysTo <= 14;
+    final color = isNear ? Colors.deepOrange : Colors.blueGrey;
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: color.withOpacity(0.08),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: color.withOpacity(0.4)),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              isNear ? Icons.warning_amber_rounded : Icons.event_note,
+              color: color,
+              size: 18,
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                daysTo == 0
+                    ? '本日 $dateStr が決算発表日です。AI分析にも反映されます。'
+                    : '決算発表まであと$daysTo日（$dateStr）。AI分析にも反映されます。',
+                style: TextStyle(fontSize: 12, color: color, height: 1.4),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildAiTab(DetailViewModel vm) {
     final candles = List<Map<String, dynamic>>.from(
       vm.detail!['candles'] ?? [],
@@ -1073,6 +1126,9 @@ class _DetailScreenState extends State<DetailScreen> {
             }).toList(),
           ),
           const SizedBox(height: 16),
+
+          // ── 決算アラート（AI分析に渡す情報をユーザーにも見せる）──
+          _buildEarningsNotice(vm),
 
           // ── 分析ボタン ──
           SizedBox(

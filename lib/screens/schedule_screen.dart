@@ -2,23 +2,34 @@
 // ScheduleScreen
 // 株式市場のイベントカレンダーを表示する画面。
 //
-// 表示する情報：
+// 表示モードは2つ：
 // ・カレンダー（月表示）
 //   - 日経平均の日次騰落（赤=上昇・緑=下落・色の濃さで変動幅を表現）
 //   - マーケットイベント（FOMC・日銀・SQ・祝日等）のドット
 //   - ウォッチリスト銘柄の決算・配当落ち日のドット
-// ・イベント一覧（月内の全イベントを日付順）
+//   - イベント一覧（月内の全イベントを日付順）
+// ・直近の予定（リスト表示）
+//   - 今日以降のイベントを種別で絞って一覧表示
+//   - 「FOMCの次はいつか」を月をめくらずに確認できる
+//   - 各イベントに「あと◯日」を表示
+//
+// どちらのモードでも、表示するイベント種別はフィルタで切り替えられる。
+// フィルタ内容はSharedPreferencesに保存され、次回起動時も維持される。
 //
 // データソース：
-// ・マーケットイベント → バックエンド（/market/events）
-// ・日経平均月次データ → バックエンド（/nikkei/monthly）
-// ・銘柄イベント      → バックエンド（/stock/events）
-// ・ウォッチリスト銘柄 → DynamoDB（WatchlistService）
+// ・マーケットイベント   → バックエンド（/market/events）
+// ・直近のマーケットイベント → バックエンド（/market/upcoming）
+// ・日経平均月次データ   → バックエンド（/nikkei/monthly）
+// ・銘柄イベント        → バックエンド（/stock/events）
+// ・ウォッチリスト銘柄   → DynamoDB（WatchlistService）
+// ・表示フィルタ         → SharedPreferences（EventFilterService）
 // ============================================================
 
 import 'package:flutter/material.dart';
+import '../config/event_types.dart';
 import '../services/stock_service.dart';
 import '../services/watchlist_service.dart';
+import '../services/event_filter_service.dart';
 import '../widgets/api_error_banner.dart';
 
 class ScheduleScreen extends StatefulWidget {
@@ -59,6 +70,22 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
   /// key: 「YYYY-MM-DD」形式の日付、value: {close・change・change_pct}
   Map<String, dynamic> _nikkeiData = {};
 
+  /// 表示モード（false=カレンダー / true=直近の予定）
+  bool _showUpcoming = false;
+
+  /// 表示するイベントグループのキー（フィルタ）
+  /// 初期値は全表示。読み込み後にSharedPreferencesの内容で上書きされる。
+  Set<String> _visibleGroups = Set<String>.from(kAllEventGroupKeys);
+
+  /// 「直近の予定」で絞り込み中のグループキー（nullなら全種別）
+  String? _upcomingFilterKey;
+
+  /// 今日以降のマーケットイベント（「直近の予定」用）
+  List<Map<String, dynamic>> _upcomingMarketEvents = [];
+
+  /// 「直近の予定」を読み込み済みか
+  bool _upcomingLoaded = false;
+
   // ============================================================
   // ライフサイクル
   // ============================================================
@@ -66,7 +93,15 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
   @override
   void initState() {
     super.initState();
+    _loadFilter();
     _loadAllEvents();
+  }
+
+  /// 保存済みの表示フィルタを読み込む
+  Future<void> _loadFilter() async {
+    final groups = await EventFilterService.getVisibleGroups();
+    if (!mounted) return;
+    setState(() => _visibleGroups = groups);
   }
 
   // ============================================================
@@ -115,6 +150,28 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     }
   }
 
+  /// 「直近の予定」用のデータを取得する
+  ///
+  /// 今日以降のマーケットイベントを数ヶ月分まとめて取得する。
+  /// 銘柄イベント（決算・配当）は _stockEvents に既に入っている。
+  /// 一度取得したらタブを切り替えても再取得しない。
+  Future<void> _loadUpcoming({bool force = false}) async {
+    if (_upcomingLoaded && !force) return;
+    setState(() => _isLoading = true);
+    try {
+      final events = await StockService.getUpcomingEvents(months: 6);
+      if (!mounted) return;
+      setState(() {
+        _upcomingMarketEvents = events;
+        _upcomingLoaded = true;
+      });
+    } catch (e) {
+      debugPrint('直近の予定取得エラー: $e');
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
   // ============================================================
   // ユーティリティ
   // ============================================================
@@ -149,12 +206,38 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     return map[colorName] ?? Colors.grey;
   }
 
-  /// 指定日のイベント一覧を返す（マーケット＋銘柄）
+  /// フィルタで表示ONになっているイベントかどうか
+  ///
+  /// 未知のtype（バックエンドに新しい種別が増えた場合）は
+  /// 消えてしまわないよう表示する側に倒す。
+  bool _isVisible(Map<String, dynamic> event) {
+    final group = groupOfType(event['type']?.toString());
+    if (group == null) return true;
+    return _visibleGroups.contains(group.key);
+  }
+
+  /// フィルタを適用したイベントリストを返す
+  List<Map<String, dynamic>> _applyFilter(List<Map<String, dynamic>> events) =>
+      events.where(_isVisible).toList();
+
+  /// 日付文字列から「あと◯日」のラベルを作る
+  String _daysToLabel(String dateStr) {
+    final date = DateTime.tryParse(dateStr);
+    if (date == null) return '';
+    final now = DateTime.now();
+    final days = date.difference(DateTime(now.year, now.month, now.day)).inDays;
+    if (days < 0) return '終了';
+    if (days == 0) return '今日';
+    if (days == 1) return '明日';
+    return 'あと$days日';
+  }
+
+  /// 指定日のイベント一覧を返す（マーケット＋銘柄／フィルタ適用済み）
   List<Map<String, dynamic>> _eventsForDay(DateTime day) {
     final dateStr = _fmt(day);
     final market = _marketEvents.where((e) => e['date'] == dateStr).toList();
     final stock = _stockEvents.where((e) => e['date'] == dateStr).toList();
-    return [...market, ...stock];
+    return _applyFilter([...market, ...stock]);
   }
 
   /// 表示中の月の全イベントを日付順にグループ化して返す
@@ -171,7 +254,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
         .toList();
 
     // マーケットイベントと銘柄イベントをマージして日付でグループ化
-    final all = [..._marketEvents, ...stock];
+    final all = _applyFilter([..._marketEvents, ...stock]);
     final Map<String, List<Map<String, dynamic>>> grouped = {};
     for (final e in all) {
       grouped.putIfAbsent(e['date'] as String, () => []).add(e);
@@ -187,13 +270,30 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // 全表示でない場合はフィルタアイコンに印を付けて気づけるようにする
+    final isFiltered = _visibleGroups.length != kAllEventGroupKeys.length;
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('スケジュール'),
         actions: [
           IconButton(
+            tooltip: '表示するイベントを選ぶ',
+            icon: Badge(
+              isLabelVisible: isFiltered,
+              backgroundColor: Colors.orange,
+              smallSize: 8,
+              child: const Icon(Icons.filter_alt_outlined),
+            ),
+            onPressed: _showFilterSheet,
+          ),
+          IconButton(
+            tooltip: '再読み込み',
             icon: const Icon(Icons.refresh),
-            onPressed: _loadAllEvents,
+            onPressed: () {
+              _loadAllEvents();
+              _loadUpcoming(force: true);
+            },
           ),
         ],
       ),
@@ -202,9 +302,14 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
           // APIエラーバナー（エラーの時だけ表示）
           if (!widget.apiAvailable) ApiErrorBanner(message: widget.apiErrorMsg),
 
+          // 表示モード切替（カレンダー / 直近の予定）
+          _buildModeSwitch(),
+
           Expanded(
             child: _isLoading
                 ? const Center(child: CircularProgressIndicator())
+                : _showUpcoming
+                ? _buildUpcomingView()
                 : SingleChildScrollView(
                     child: Column(
                       children: [
@@ -216,6 +321,332 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                   ),
           ),
         ],
+      ),
+    );
+  }
+
+  // ============================================================
+  // 表示モード切替
+  // ============================================================
+
+  /// 「カレンダー」「直近の予定」を切り替えるセグメントコントロール
+  Widget _buildModeSwitch() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 4),
+      child: SegmentedButton<bool>(
+        segments: const [
+          ButtonSegment(
+            value: false,
+            icon: Icon(Icons.calendar_month, size: 18),
+            label: Text('カレンダー'),
+          ),
+          ButtonSegment(
+            value: true,
+            icon: Icon(Icons.event_available, size: 18),
+            label: Text('直近の予定'),
+          ),
+        ],
+        selected: {_showUpcoming},
+        showSelectedIcon: false,
+        onSelectionChanged: (selected) {
+          setState(() => _showUpcoming = selected.first);
+          if (_showUpcoming) _loadUpcoming();
+        },
+      ),
+    );
+  }
+
+  // ============================================================
+  // 表示フィルタ
+  // ============================================================
+
+  /// 表示するイベント種別を選ぶボトムシート
+  ///
+  /// 選択内容はSharedPreferencesに保存され、次回起動時も維持される。
+  Future<void> _showFilterSheet() async {
+    // シート内で編集する一時的なコピー（キャンセルしても元に戻せるようにする）
+    final selected = Set<String>.from(_visibleGroups);
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setSheetState) => SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 20, 20, 12),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Icon(Icons.filter_alt, size: 20, color: Colors.blue),
+                    const SizedBox(width: 8),
+                    const Text(
+                      '表示するイベント',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const Spacer(),
+                    TextButton(
+                      onPressed: () => setSheetState(
+                        () => selected
+                          ..clear()
+                          ..addAll(kAllEventGroupKeys),
+                      ),
+                      child: const Text('全て表示'),
+                    ),
+                  ],
+                ),
+                Text(
+                  'カレンダーと直近の予定の両方に反映されます',
+                  style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+                ),
+                const SizedBox(height: 8),
+                Flexible(
+                  child: SingleChildScrollView(
+                    child: Column(
+                      children: kEventGroups.map((g) {
+                        return CheckboxListTile(
+                          dense: true,
+                          contentPadding: EdgeInsets.zero,
+                          controlAffinity: ListTileControlAffinity.leading,
+                          value: selected.contains(g.key),
+                          activeColor: g.color,
+                          title: Row(
+                            children: [
+                              Text(g.emoji),
+                              const SizedBox(width: 8),
+                              Text(
+                                g.label,
+                                style: const TextStyle(fontSize: 14),
+                              ),
+                              if (g.isStockEvent) ...[
+                                const SizedBox(width: 6),
+                                Text(
+                                  '（ウォッチリスト）',
+                                  style: TextStyle(
+                                    fontSize: 10,
+                                    color: Colors.grey.shade600,
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
+                          onChanged: (on) => setSheetState(() {
+                            if (on == true) {
+                              selected.add(g.key);
+                            } else {
+                              selected.remove(g.key);
+                            }
+                          }),
+                        );
+                      }).toList(),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: () => Navigator.pop(ctx),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.blue,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                    ),
+                    child: const Text('この内容で表示'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+
+    if (!mounted) return;
+    setState(() => _visibleGroups = selected);
+    await EventFilterService.saveVisibleGroups(selected);
+  }
+
+  // ============================================================
+  // 直近の予定ビュー
+  // ============================================================
+
+  /// 今日以降のイベントを、種別で絞り込んで日付順に表示する
+  ///
+  /// 「FOMCの次はいつか」をカレンダーをめくらずに確認できるようにするのが目的。
+  Widget _buildUpcomingView() {
+    final events = _upcomingEvents();
+
+    return Column(
+      children: [
+        // 種別チップ（タップで1種別だけに絞る／もう一度タップで解除）
+        _buildUpcomingChips(),
+        const Divider(height: 1),
+        Expanded(
+          child: events.isEmpty
+              ? Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(32),
+                    child: Text(
+                      _visibleGroups.isEmpty
+                          ? '表示するイベントが選ばれていません。\n右上のフィルタから選んでください。'
+                          : '直近の予定はありません',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(color: Colors.grey),
+                    ),
+                  ),
+                )
+              : ListView.separated(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  itemCount: events.length,
+                  separatorBuilder: (_, __) => const Divider(height: 1),
+                  itemBuilder: (context, index) =>
+                      _buildUpcomingRow(events[index]),
+                ),
+        ),
+      ],
+    );
+  }
+
+  /// 「直近の予定」に出すイベントを組み立てる
+  ///
+  /// マーケットイベント（今日以降・数ヶ月分）と
+  /// ウォッチリスト銘柄のイベント（決算・配当落ち日）をマージして
+  /// フィルタ・絞り込みを適用し、日付順に並べる。
+  List<Map<String, dynamic>> _upcomingEvents() {
+    final now = DateTime.now();
+    final todayStr = _fmt(DateTime(now.year, now.month, now.day));
+
+    // 銘柄イベントは今日以降のものだけ
+    final stock = _stockEvents
+        .where((e) => (e['date']?.toString() ?? '').compareTo(todayStr) >= 0)
+        .toList();
+
+    var all = _applyFilter([..._upcomingMarketEvents, ...stock]);
+
+    // チップで1種別に絞っている場合
+    if (_upcomingFilterKey != null) {
+      all = all
+          .where((e) => groupOfType(e['type']?.toString())?.key == _upcomingFilterKey)
+          .toList();
+    }
+
+    all.sort((a, b) => (a['date'] ?? '').toString().compareTo(
+      (b['date'] ?? '').toString(),
+    ));
+    return all;
+  }
+
+  /// 種別を1つに絞り込むチップ列
+  Widget _buildUpcomingChips() {
+    // フィルタでONになっているグループだけをチップに出す
+    final groups =
+        kEventGroups.where((g) => _visibleGroups.contains(g.key)).toList();
+
+    return SizedBox(
+      height: 48,
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(right: 6),
+            child: ChoiceChip(
+              label: const Text('すべて', style: TextStyle(fontSize: 12)),
+              selected: _upcomingFilterKey == null,
+              onSelected: (_) => setState(() => _upcomingFilterKey = null),
+            ),
+          ),
+          ...groups.map(
+            (g) => Padding(
+              padding: const EdgeInsets.only(right: 6),
+              child: ChoiceChip(
+                label: Text(
+                  '${g.emoji} ${g.label}',
+                  style: const TextStyle(fontSize: 12),
+                ),
+                selected: _upcomingFilterKey == g.key,
+                selectedColor: g.color.withOpacity(0.25),
+                onSelected: (on) => setState(
+                  () => _upcomingFilterKey = on ? g.key : null,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 「直近の予定」の1行
+  Widget _buildUpcomingRow(Map<String, dynamic> event) {
+    final dateStr = event['date']?.toString() ?? '';
+    final date = DateTime.tryParse(dateStr);
+    final group = groupOfType(event['type']?.toString());
+    final color = group?.color ?? _eventColor(event['color']?.toString() ?? '');
+    final label = event['label']?.toString() ?? group?.label ?? 'イベント';
+    final daysLabel = _daysToLabel(dateStr);
+
+    // 7日以内は強調して「近い」と分かるようにする
+    final isSoon =
+        date != null &&
+        date
+                .difference(
+                  DateTime(
+                    DateTime.now().year,
+                    DateTime.now().month,
+                    DateTime.now().day,
+                  ),
+                )
+                .inDays <=
+            7;
+
+    const weekdays = ['月', '火', '水', '木', '金', '土', '日'];
+
+    return ListTile(
+      dense: true,
+      leading: Container(
+        width: 4,
+        height: 36,
+        decoration: BoxDecoration(
+          color: color,
+          borderRadius: BorderRadius.circular(2),
+        ),
+      ),
+      title: Text(
+        label,
+        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+      ),
+      subtitle: Text(
+        date == null
+            ? dateStr
+            : '${date.month}月${date.day}日（${weekdays[date.weekday - 1]}）',
+        style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+      ),
+      trailing: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        decoration: BoxDecoration(
+          color: isSoon
+              ? color.withOpacity(0.15)
+              : Colors.grey.withOpacity(0.12),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Text(
+          daysLabel,
+          style: TextStyle(
+            fontSize: 11,
+            fontWeight: isSoon ? FontWeight.bold : FontWeight.normal,
+            color: isSoon ? color : Colors.grey.shade700,
+          ),
+        ),
       ),
     );
   }

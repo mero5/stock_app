@@ -635,12 +635,191 @@ def fmt(val, suffix="", null_str="データなし"):
     return f"{val}{suffix}"
 
 
+# ===================================================
+# プロンプトのバージョン
+#
+# プロンプトを変更したらこの値を上げる。
+# 予測記録に一緒に保存しておくことで、
+# 「改良前と改良後で的中率がどう変わったか」を比較できる。
+# ここを上げ忘れると改良の効果が測れなくなるので注意。
+# ===================================================
+PROMPT_VERSION = "v2-checks-profile-earnings"
+
+
+# ===================================================
+# 分析オプション（詳細画面のチェックボックス）
+#
+# フロントは checks を送っていたが、以前はバックエンドが
+# 一度も読んでおらず、ON/OFFしても結果が変わらなかった。
+# ここで正規化してプロンプトの組み立てに反映する。
+# ===================================================
+
+DEFAULT_CHECKS = {
+    "technical":   True,   # テクニカル（RSI・MACD等）
+    "fundamental": True,   # ファンダメンタル（PER・PBR等）
+    "macro":       False,  # マクロ（VIX・ドル円等）
+    "supply":      False,  # 需給（信用倍率・騰落レシオ等）
+    "news":        False,  # ニュース
+}
+
+# チェックをOFFにしたとき、優先順位リストからも外す項目
+CHECK_TO_PRIORITY = {
+    "technical":   ["technical", "trend"],
+    "fundamental": ["fundamental"],
+    "macro":       ["macro"],
+    "supply":      ["supply_demand"],
+    "news":        ["news"],
+}
+
+
+def normalize_checks(checks) -> dict:
+    """フロントから来た分析オプションを検証して埋める"""
+    result = dict(DEFAULT_CHECKS)
+    if isinstance(checks, dict):
+        for key in result:
+            value = checks.get(key)
+            if isinstance(value, bool):
+                result[key] = value
+    return result
+
+
+def filter_priority_by_checks(priority: list, checks: dict) -> list:
+    """OFFにした観点を優先順位リストからも取り除く"""
+    drop = set()
+    for key, enabled in (checks or {}).items():
+        if not enabled:
+            drop.update(CHECK_TO_PRIORITY.get(key, []))
+    filtered = [p for p in (priority or []) if p not in drop]
+    # 全部OFFにされた場合は元のリストを返す（優先順位が空になるのを防ぐ）
+    return filtered or list(priority or [])
+
+
+def section(title: str, body: str, enabled: bool = True) -> str:
+    """
+    プロンプトの1ブロックを組み立てる。
+
+    OFFの観点は中身を出さず「使用しない」と明示する。
+    黙って消すとAIが勝手に推測で埋めてしまうため、必ず理由を書く。
+    """
+    if not enabled:
+        return f"{title}\n- ユーザー設定により今回は使用しない（この観点は判断材料に含めないこと）\n"
+    return f"{title}\n{body.strip()}\n"
+
+
+def build_profile_section(user_profile) -> str:
+    """
+    【ユーザープロファイル】ブロック。
+
+    設定画面で保存している項目をすべてAIに渡す。
+    以前は risk_level と analysis_style の2つしか渡しておらず、
+    残りの設定が個別銘柄の診断に反映されていなかった。
+    """
+    p = user_profile or {}
+    trade_type    = p.get('trade_type', '現物のみ')
+    short_selling = p.get('short_selling', 'しない')
+    concentration = p.get('concentration', '分散派')
+    experience    = p.get('experience', '中級')
+    risk_level    = p.get('risk_level', '中')
+
+    lines = [
+        f"- リスク許容度：{risk_level}",
+        f"- 分析スタイル：{p.get('analysis_style', 'バランス型')}",
+        f"- 投資スタイル：{p.get('investment_style', '中期')}",
+        f"- 投資経験：{experience}",
+        f"- 取引種別：{trade_type}",
+        f"- 空売り：{short_selling}",
+        f"- 対象市場：{p.get('market', '両方')}",
+        f"- 分散/集中：{concentration}",
+        "",
+        "※このプロファイルに合わせて必ず結論と表現を調整すること：",
+    ]
+
+    if risk_level == "低":
+        lines.append("  - リスク許容度が低いので、迷う場合は様子見寄りに補正し、損切りラインは浅めに提案する")
+    elif risk_level == "高":
+        lines.append("  - リスク許容度が高いので、過度に様子見へ寄せず、根拠があれば明確に方向を示す")
+
+    if experience in ("初心者", "初級"):
+        lines.append("  - 投資経験が浅いので、専門用語には短い補足を付け、断定的な表現を避ける")
+
+    if short_selling == "しない":
+        lines.append("  - 空売りをしないユーザーなので、下落判断でも空売り戦略は提案せず「見送り・利確」で表現する")
+
+    if trade_type == "現物のみ":
+        lines.append("  - 現物のみのユーザーなので、信用取引やレバレッジ前提の戦略は提案しない")
+
+    if concentration == "集中派":
+        lines.append("  - 集中派なので1銘柄あたりの許容リスクは高めだが、下落シナリオの説明は厚くする")
+    else:
+        lines.append("  - 分散派なので、ポジションサイズを抑える前提で助言する")
+
+    return "\n".join(lines)
+
+
 def build_short_prompt(name, code, tech, fund, macro, breadth,
                        earnings_alert, news_summary, score, user_profile,
                        sector="不明", industry="不明",
-                       priority=None, period_days=None) -> str:
-    priority = normalize_priority(priority, "短期")
+                       priority=None, period_days=None, checks=None) -> str:
+    checks = normalize_checks(checks)
+    priority = filter_priority_by_checks(normalize_priority(priority, "短期"), checks)
     period_label = get_period_label("短期", period_days)
+
+    # ── チェックボックスでON/OFFされるブロック ──
+    tech_block = section("【テクニカル】", f"""
+- 現在株価：{fmt(tech.get('price'), '円')}
+- RSI(14)：{fmt(tech.get('rsi'))}
+  ※70以上=買われすぎ・反落リスク／50〜70=上昇継続／30〜50=弱含み／30以下=売られすぎ・反発期待
+- MACD：{fmt(tech.get('macd'))} / シグナル：{fmt(tech.get('macd_signal'))} / ヒストグラム：{fmt(tech.get('macd_hist'))}
+  ※MACDがシグナルを上回る=上昇シグナル／ヒストグラム拡大=トレンド強化
+- ボリンジャー：上{fmt(tech.get('bb_upper'), '円')} 中{fmt(tech.get('bb_mid'), '円')} 下{fmt(tech.get('bb_lower'), '円')}
+  ※上限付近=反落リスク／下限付近=反発期待
+- MA5：{fmt(tech.get('ma5'), '円')} / MA25：{fmt(tech.get('ma25'), '円')}
+  ※MA5がMA25を上回る=ゴールデンクロス／下回る=デッドクロス
+- ストキャス(K)：{fmt(tech.get('stoch_k'))}
+  ※80以上=買われすぎ／20以下=売られすぎ
+- OBV：{fmt(tech.get('obv'))}
+  ※上昇トレンドなら出来高が伴っているか確認
+- ATR：{fmt(tech.get('atr'), '円')}
+  ※ボラティリティの目安
+- 出来高移動平均比：{fmt(tech.get('volume_ratio'), '倍')}
+  ※1.5倍以上=注目度高い／0.5倍以下=閑散
+- 52週レンジ位置：{fmt(tech.get('range_position'), '%')}
+  ※0%=52週安値／100%=52週高値／30%以下=底値圏／70%以上=高値圏
+""", checks["technical"])
+
+    supply_block = section("【需給・市場内部】", f"""
+- 信用倍率：{fmt(macro.get('margin_ratio'), '倍')}
+  ※倍率高い=将来の売り圧力
+- 空売り比率：{fmt(macro.get('short_ratio'), '%')}
+  ※高い=弱気筋が多い
+- 騰落レシオ：{fmt(breadth.get('advance_decline_ratio'))}
+  ※120以上=過熱感／70以下=売られすぎ
+- 上昇銘柄数：{fmt(breadth.get('advancers'))} / 下落銘柄数：{fmt(breadth.get('decliners'))}
+""", checks["supply"])
+
+    fund_block = section("【ファンダ（参考）】", f"""
+- PER：{fmt(fund.get('per'), '倍')} / PBR：{fmt(fund.get('pbr'), '倍')}
+- ROE：{fmt(fund.get('roe'), '%')}
+- 売上成長率：{fmt(fund.get('revenue_growth'), '%')}
+""", checks["fundamental"])
+
+    macro_block = section("【市場環境・マクロ】", f"""
+- 日経平均トレンド：{fmt(macro.get('nikkei_trend'))}
+- VIX：{fmt(macro.get('vix'))}
+  ※20以下=安定／20〜30=やや不安定／30以上=恐怖状態
+- 米10年債：{fmt(macro.get('us10y'), '%')}
+  ※金利上昇=グロース株逆風
+- ドル円：{fmt(macro.get('usd_jpy'), '円')}
+  ※円安=輸出株有利／円高=輸入株有利
+- S&P500トレンド：{fmt(macro.get('sp500_trend'))}
+- DXY（ドル指数）：{fmt(macro.get('dxy'))}
+- 原油：{fmt(macro.get('oil_price'), 'ドル')}
+- 金：{fmt(macro.get('gold_price'), 'ドル')}
+  ※金上昇=リスクオフの指標
+""", checks["macro"])
+
+    news_block = section("【ニュース】", news_summary, checks["news"])
+
     return f"""
 あなたは日本株の短期スイングトレード専門アナリストです。
 以下のデータを元に{name}（{code}）が{period_label}で「上昇・様子見・下落」のどれになるかを確率ベースで判断してください。
@@ -676,41 +855,10 @@ def build_short_prompt(name, code, tech, fund, macro, breadth,
 - 短期トレンドが継続しているか
 
 【ユーザープロファイル】
-- リスク許容度：{user_profile.get('risk_level', '中')}
-- 分析スタイル：{user_profile.get('analysis_style', 'バランス型')}
+{build_profile_section(user_profile)}
 
-【テクニカル】
-- 現在株価：{fmt(tech.get('price'), '円')}
-- RSI(14)：{fmt(tech.get('rsi'))}
-  ※70以上=買われすぎ・反落リスク／50〜70=上昇継続／30〜50=弱含み／30以下=売られすぎ・反発期待
-- MACD：{fmt(tech.get('macd'))} / シグナル：{fmt(tech.get('macd_signal'))} / ヒストグラム：{fmt(tech.get('macd_hist'))}
-  ※MACDがシグナルを上回る=上昇シグナル／ヒストグラム拡大=トレンド強化
-- ボリンジャー：上{fmt(tech.get('bb_upper'), '円')} 中{fmt(tech.get('bb_mid'), '円')} 下{fmt(tech.get('bb_lower'), '円')}
-  ※上限付近=反落リスク／下限付近=反発期待
-- MA5：{fmt(tech.get('ma5'), '円')} / MA25：{fmt(tech.get('ma25'), '円')}
-  ※MA5がMA25を上回る=ゴールデンクロス／下回る=デッドクロス
-- ストキャス(K)：{fmt(tech.get('stoch_k'))}
-  ※80以上=買われすぎ／20以下=売られすぎ
-- OBV：{fmt(tech.get('obv'))}
-  ※上昇トレンドなら出来高が伴っているか確認
-- ATR：{fmt(tech.get('atr'), '円')}
-  ※ボラティリティの目安
-- 出来高移動平均比：{fmt(tech.get('volume_ratio'), '倍')}
-  ※1.5倍以上=注目度高い／0.5倍以下=閑散
-- 52週レンジ位置：{fmt(tech.get('range_position'), '%')}
-  ※0%=52週安値／100%=52週高値／30%以下=底値圏／70%以上=高値圏
-
-【需給】
-- 信用倍率：{fmt(macro.get('margin_ratio'), '倍')}
-  ※倍率高い=将来の売り圧力
-- 空売り比率：{fmt(macro.get('short_ratio'), '%')}
-  ※高い=弱気筋が多い
-
-【市場内部】
-- 騰落レシオ：{fmt(breadth.get('advance_decline_ratio'))}
-  ※120以上=過熱感／70以下=売られすぎ
-- 上昇銘柄数：{fmt(breadth.get('advancers'))} / 下落銘柄数：{fmt(breadth.get('decliners'))}
-
+{tech_block}
+{supply_block}
 【セクター情報】
 - セクター：{sector}
 - 業種：{industry}
@@ -718,27 +866,8 @@ def build_short_prompt(name, code, tech, fund, macro, breadth,
   ※プラス=そのセクターに資金が入っている／マイナス=抜けている
   ※「不明」の場合は対応するセクターETFが無い銘柄（ETF・REIT等）なので、ニュース・マクロから推定すること
 
-【ファンダ（参考）】
-- PER：{fmt(fund.get('per'), '倍')} / PBR：{fmt(fund.get('pbr'), '倍')}
-- ROE：{fmt(fund.get('roe'), '%')}
-- 売上成長率：{fmt(fund.get('revenue_growth'), '%')}
-
-【市場環境】
-- 日経平均トレンド：{fmt(macro.get('nikkei_trend'))}
-- VIX：{fmt(macro.get('vix'))}
-  ※20以下=安定／20〜30=やや不安定／30以上=恐怖状態
-- 米10年債：{fmt(macro.get('us10y'), '%')}
-  ※金利上昇=グロース株逆風
-- ドル円：{fmt(macro.get('usd_jpy'), '円')}
-  ※円安=輸出株有利／円高=輸入株有利
-- S&P500トレンド：{fmt(macro.get('sp500_trend'))}
-
-【マクロ指標】
-- DXY（ドル指数）：{fmt(macro.get('dxy'))}
-- 原油：{fmt(macro.get('oil_price'), 'ドル')}
-- 金：{fmt(macro.get('gold_price'), 'ドル')}
-  ※金上昇=リスクオフの指標
-
+{fund_block}
+{macro_block}
 【決算アラート】
 - 決算日：{fmt(earnings_alert.get('date'))}
 - 残り日数：{fmt(earnings_alert.get('days_to'), '日')}
@@ -746,9 +875,7 @@ def build_short_prompt(name, code, tech, fund, macro, breadth,
   ※danger=急騰・急落リスク大／caution=注意／safe=当面なし
   ※リスク許容度が低い場合はdanger・cautionで様子見を強く推奨
 
-【ニュース】
-{news_summary}
-
+{news_block}
 【参考スコア】
 - 総合スコア：{fmt(score, '点')}
   ※スコアは参考情報として扱い再計算・変更はしない
@@ -791,9 +918,63 @@ def build_short_prompt(name, code, tech, fund, macro, breadth,
 def build_medium_prompt(name, code, tech, fund, macro, breadth,
                         earnings_alert, news_summary, score, user_profile,
                         sector="不明", industry="不明",
-                        priority=None, period_days=None) -> str:
-    priority = normalize_priority(priority, "中期")
+                        priority=None, period_days=None, checks=None) -> str:
+    checks = normalize_checks(checks)
+    priority = filter_priority_by_checks(normalize_priority(priority, "中期"), checks)
     period_label = get_period_label("中期", period_days)
+
+    # ── チェックボックスでON/OFFされるブロック ──
+    tech_block = section("【テクニカル（トレンド重視）】", f"""
+- 現在株価：{fmt(tech.get('price'), '円')}
+- MA25：{fmt(tech.get('ma25'), '円')} / MA75：{fmt(tech.get('ma75'), '円')}
+  ※MA25がMA75を上回る=中期上昇トレンド
+- MACD：{fmt(tech.get('macd'))} / シグナル：{fmt(tech.get('macd_signal'))} / ヒストグラム：{fmt(tech.get('macd_hist'))}
+- ADX：{fmt(tech.get('adx'))}
+  ※25以上=トレンド強い／25以下=方向感なし
+- OBV：{fmt(tech.get('obv'))}
+- 出来高移動平均比：{fmt(tech.get('volume_ratio'), '倍')}
+- 52週レンジ位置：{fmt(tech.get('range_position'), '%')}
+- モメンタム（1ヶ月）：{fmt(tech.get('momentum_1m'), '%')}
+- モメンタム（3ヶ月）：{fmt(tech.get('momentum_3m'), '%')}
+""", checks["technical"])
+
+    supply_block = section("【需給・市場内部】", f"""
+- 信用倍率：{fmt(macro.get('margin_ratio'), '倍')}
+- 空売り比率：{fmt(macro.get('short_ratio'), '%')}
+- 騰落レシオ：{fmt(breadth.get('advance_decline_ratio'))}
+- 上昇銘柄数：{fmt(breadth.get('advancers'))} / 下落銘柄数：{fmt(breadth.get('decliners'))}
+""", checks["supply"])
+
+    fund_block = section("【ファンダメンタル】", f"""
+- PER：{fmt(fund.get('per'), '倍')}
+  ※業種平均より低い=割安
+- PBR：{fmt(fund.get('pbr'), '倍')}
+  ※1倍割れ=資産的に割安
+- ROE：{fmt(fund.get('roe'), '%')}
+  ※10%以上=資本効率良好
+- ROA：{fmt(fund.get('roa'), '%')}
+- 売上成長率：{fmt(fund.get('revenue_growth'), '%')}
+- EPS成長率：{fmt(fund.get('eps_growth'), '%')}
+- 営業利益率：{fmt(fund.get('operating_margin'), '%')}
+- 配当利回り：{fmt(fund.get('dividend_yield'), '%')}
+""", checks["fundamental"])
+
+    macro_block = section("【市場環境・マクロ】", f"""
+- 日経平均トレンド：{fmt(macro.get('nikkei_trend'))}
+- VIX：{fmt(macro.get('vix'))}
+- 米10年債：{fmt(macro.get('us10y'), '%')}
+- 米2年債：{fmt(macro.get('us2y'), '%')}
+- 金利差（10年-2年）：{fmt(macro.get('yield_spread'), '%')}
+  ※マイナス=逆イールド・景気後退シグナル
+- ドル円：{fmt(macro.get('usd_jpy'), '円')}
+- DXY：{fmt(macro.get('dxy'))}
+- S&P500トレンド：{fmt(macro.get('sp500_trend'))}
+- 原油：{fmt(macro.get('oil_price'), 'ドル')}
+- 金：{fmt(macro.get('gold_price'), 'ドル')}
+""", checks["macro"])
+
+    news_block = section("【ニュース】", news_summary, checks["news"])
+
     return f"""
 あなたは日本株の中期投資（{period_label}）専門アナリストです。
 以下のデータを元に{name}（{code}）が{period_label}で「上昇・様子見・下落」のどれになるかを確率ベースで判断してください。
@@ -830,30 +1011,10 @@ def build_medium_prompt(name, code, tech, fund, macro, breadth,
 - トレンドは継続か崩れか
 
 【ユーザープロファイル】
-- リスク許容度：{user_profile.get('risk_level', '中')}
-- 分析スタイル：{user_profile.get('analysis_style', 'バランス型')}
+{build_profile_section(user_profile)}
 
-【テクニカル（トレンド重視）】
-- 現在株価：{fmt(tech.get('price'), '円')}
-- MA25：{fmt(tech.get('ma25'), '円')} / MA75：{fmt(tech.get('ma75'), '円')}
-  ※MA25がMA75を上回る=中期上昇トレンド
-- MACD：{fmt(tech.get('macd'))} / シグナル：{fmt(tech.get('macd_signal'))} / ヒストグラム：{fmt(tech.get('macd_hist'))}
-- ADX：{fmt(tech.get('adx'))}
-  ※25以上=トレンド強い／25以下=方向感なし
-- OBV：{fmt(tech.get('obv'))}
-- 出来高移動平均比：{fmt(tech.get('volume_ratio'), '倍')}
-- 52週レンジ位置：{fmt(tech.get('range_position'), '%')}
-- モメンタム（1ヶ月）：{fmt(tech.get('momentum_1m'), '%')}
-- モメンタム（3ヶ月）：{fmt(tech.get('momentum_3m'), '%')}
-
-【需給】
-- 信用倍率：{fmt(macro.get('margin_ratio'), '倍')}
-- 空売り比率：{fmt(macro.get('short_ratio'), '%')}
-
-【市場内部】
-- 騰落レシオ：{fmt(breadth.get('advance_decline_ratio'))}
-- 上昇銘柄数：{fmt(breadth.get('advancers'))} / 下落銘柄数：{fmt(breadth.get('decliners'))}
-
+{tech_block}
+{supply_block}
 【セクター情報】
 - セクター：{sector}
 - 業種：{industry}
@@ -861,43 +1022,15 @@ def build_medium_prompt(name, code, tech, fund, macro, breadth,
   ※プラス=そのセクターに資金が入っている／マイナス=抜けている
   ※「不明」の場合は対応するセクターETFが無い銘柄（ETF・REIT等）なので、ニュース・マクロから推定すること
 
-【ファンダメンタル】
-- PER：{fmt(fund.get('per'), '倍')}
-  ※業種平均より低い=割安
-- PBR：{fmt(fund.get('pbr'), '倍')}
-  ※1倍割れ=資産的に割安
-- ROE：{fmt(fund.get('roe'), '%')}
-  ※10%以上=資本効率良好
-- ROA：{fmt(fund.get('roa'), '%')}
-- 売上成長率：{fmt(fund.get('revenue_growth'), '%')}
-- EPS成長率：{fmt(fund.get('eps_growth'), '%')}
-- 営業利益率：{fmt(fund.get('operating_margin'), '%')}
-- 配当利回り：{fmt(fund.get('dividend_yield'), '%')}
-
-【市場環境】
-- 日経平均トレンド：{fmt(macro.get('nikkei_trend'))}
-- VIX：{fmt(macro.get('vix'))}
-- 米10年債：{fmt(macro.get('us10y'), '%')}
-- 米2年債：{fmt(macro.get('us2y'), '%')}
-- 金利差（10年-2年）：{fmt(macro.get('yield_spread'), '%')}
-  ※マイナス=逆イールド・景気後退シグナル
-- ドル円：{fmt(macro.get('usd_jpy'), '円')}
-- DXY：{fmt(macro.get('dxy'))}
-- S&P500トレンド：{fmt(macro.get('sp500_trend'))}
-
-【マクロ指標】
-- 原油：{fmt(macro.get('oil_price'), 'ドル')}
-- 金：{fmt(macro.get('gold_price'), 'ドル')}
-
+{fund_block}
+{macro_block}
 【決算アラート】
 - 決算日：{fmt(earnings_alert.get('date'))}
 - 残り日数：{fmt(earnings_alert.get('days_to'), '日')}
 - アラートレベル：{earnings_alert.get('level', 'safe')}
   ※danger=急騰・急落リスク大／caution=注意／safe=当面なし
 
-【ニュース】
-{news_summary}
-
+{news_block}
 【参考スコア】
 - 総合スコア：{fmt(score, '点')}
 
@@ -941,12 +1074,69 @@ def build_medium_prompt(name, code, tech, fund, macro, breadth,
 def build_long_prompt(name, code, tech, fund, macro, breadth=None,
                       earnings_alert=None, news_summary="", score=None, user_profile=None,
                       sector="不明", industry="不明",
-                      priority=None, period_days=None) -> str:
-    priority = normalize_priority(priority, "長期")
+                      priority=None, period_days=None, checks=None) -> str:
+    checks = normalize_checks(checks)
+    priority = filter_priority_by_checks(normalize_priority(priority, "長期"), checks)
     period_label = get_period_label("長期", period_days)
     breadth = breadth or {}
     earnings_alert = earnings_alert or {}
     user_profile = user_profile or {}
+
+    # ── チェックボックスでON/OFFされるブロック ──
+    fund_block = section("【ファンダメンタル（最重要）】", f"""
+- PER：{fmt(fund.get('per'), '倍')}
+  ※業種平均より低い=割安
+- PBR：{fmt(fund.get('pbr'), '倍')}
+  ※1倍割れ=資産的に割安
+- ROE：{fmt(fund.get('roe'), '%')}
+  ※10%以上=資本効率良好／5%以下=低効率
+- ROA：{fmt(fund.get('roa'), '%')}
+  ※5%以上=資産効率良好
+- 売上成長率：{fmt(fund.get('revenue_growth'), '%')}
+  ※プラス継続=成長トレンド
+- EPS成長率：{fmt(fund.get('eps_growth'), '%')}
+- 営業利益率：{fmt(fund.get('operating_margin'), '%')}
+- 負債比率：{fmt(fund.get('debt_ratio'))}
+  ※低いほど財務健全
+- 配当利回り：{fmt(fund.get('dividend_yield'), '%')}
+- FCF：{fmt(fund.get('fcf'))}
+  ※プラス=キャッシュ創出力あり
+- アナリスト目標株価：{fmt(fund.get('target_price'), '円')}
+- アナリスト評価：{fmt(fund.get('analyst_rating'))}
+""", checks["fundamental"])
+
+    supply_block = section("【需給・市場内部】", f"""
+- 信用倍率：{fmt(macro.get('margin_ratio'), '倍')}
+- 空売り比率：{fmt(macro.get('short_ratio'), '%')}
+- 騰落レシオ：{fmt(breadth.get('advance_decline_ratio'))}
+- 上昇銘柄数：{fmt(breadth.get('advancers'))} / 下落銘柄数：{fmt(breadth.get('decliners'))}
+""", checks["supply"])
+
+    tech_block = section("【テクニカル（参考）】", f"""
+- 現在株価：{fmt(tech.get('price'), '円')}
+- MA75：{fmt(tech.get('ma75'), '円')}
+- 52週レンジ位置：{fmt(tech.get('range_position'), '%')}
+- モメンタム（3ヶ月）：{fmt(tech.get('momentum_3m'), '%')}
+- モメンタム（6ヶ月）：{fmt(tech.get('momentum_6m'), '%')}
+- ADX：{fmt(tech.get('adx'))}
+""", checks["technical"])
+
+    macro_block = section("【マクロ・市場環境】", f"""
+- 日経平均トレンド：{fmt(macro.get('nikkei_trend'))}
+- VIX：{fmt(macro.get('vix'))}
+- 米10年債：{fmt(macro.get('us10y'), '%')}
+- 米2年債：{fmt(macro.get('us2y'), '%')}
+- 金利差（10年-2年）：{fmt(macro.get('yield_spread'), '%')}
+  ※マイナス=逆イールド・景気後退シグナル
+- ドル円：{fmt(macro.get('usd_jpy'), '円')}
+- DXY：{fmt(macro.get('dxy'))}
+- 原油：{fmt(macro.get('oil_price'), 'ドル')}
+- 金：{fmt(macro.get('gold_price'), 'ドル')}
+- S&P500トレンド：{fmt(macro.get('sp500_trend'))}
+""", checks["macro"])
+
+    news_block = section("【ニュース】", news_summary, checks["news"])
+
     return f"""
 あなたは日本株の長期投資（{period_label}）専門アナリストです。
 以下のデータを元に{name}（{code}）が長期で「上昇・様子見・下落」のどれになるかを確率ベースで判断してください。
@@ -982,30 +1172,9 @@ def build_long_prompt(name, code, tech, fund, macro, breadth=None,
 - 金利環境が追い風か逆風か
 
 【ユーザープロファイル】
-- リスク許容度：{user_profile.get('risk_level', '中')}
-- 分析スタイル：{user_profile.get('analysis_style', 'バランス型')}
+{build_profile_section(user_profile)}
 
-【ファンダメンタル（最重要）】
-- PER：{fmt(fund.get('per'), '倍')}
-  ※業種平均より低い=割安
-- PBR：{fmt(fund.get('pbr'), '倍')}
-  ※1倍割れ=資産的に割安
-- ROE：{fmt(fund.get('roe'), '%')}
-  ※10%以上=資本効率良好／5%以下=低効率
-- ROA：{fmt(fund.get('roa'), '%')}
-  ※5%以上=資産効率良好
-- 売上成長率：{fmt(fund.get('revenue_growth'), '%')}
-  ※プラス継続=成長トレンド
-- EPS成長率：{fmt(fund.get('eps_growth'), '%')}
-- 営業利益率：{fmt(fund.get('operating_margin'), '%')}
-- 負債比率：{fmt(fund.get('debt_ratio'))}
-  ※低いほど財務健全
-- 配当利回り：{fmt(fund.get('dividend_yield'), '%')}
-- FCF：{fmt(fund.get('fcf'))}
-  ※プラス=キャッシュ創出力あり
-- アナリスト目標株価：{fmt(fund.get('target_price'), '円')}
-- アナリスト評価：{fmt(fund.get('analyst_rating'))}
-
+{fund_block}
 【セクター情報】
 - セクター：{sector}
 - 業種：{industry}
@@ -1013,44 +1182,16 @@ def build_long_prompt(name, code, tech, fund, macro, breadth=None,
   ※プラス=そのセクターに資金が入っている／マイナス=抜けている
   ※「不明」の場合は対応するセクターETFが無い銘柄（ETF・REIT等）なので、ニュース・マクロから推定すること
 
-【需給】
-- 信用倍率：{fmt(macro.get('margin_ratio'), '倍')}
-- 空売り比率：{fmt(macro.get('short_ratio'), '%')}
-
-【市場内部】
-- 騰落レシオ：{fmt(breadth.get('advance_decline_ratio'))}
-- 上昇銘柄数：{fmt(breadth.get('advancers'))} / 下落銘柄数：{fmt(breadth.get('decliners'))}
-
+{supply_block}
 【決算アラート】
 - 決算日：{fmt(earnings_alert.get('date'))}
 - 残り日数：{fmt(earnings_alert.get('days_to'), '日')}
 - アラートレベル：{earnings_alert.get('level', 'safe')}
   ※長期保有でも決算をまたぐ場合は変動リスクとして言及すること
 
-【テクニカル（参考）】
-- 現在株価：{fmt(tech.get('price'), '円')}
-- MA75：{fmt(tech.get('ma75'), '円')}
-- 52週レンジ位置：{fmt(tech.get('range_position'), '%')}
-- モメンタム（3ヶ月）：{fmt(tech.get('momentum_3m'), '%')}
-- モメンタム（6ヶ月）：{fmt(tech.get('momentum_6m'), '%')}
-- ADX：{fmt(tech.get('adx'))}
-
-【マクロ・市場環境】
-- 日経平均トレンド：{fmt(macro.get('nikkei_trend'))}
-- VIX：{fmt(macro.get('vix'))}
-- 米10年債：{fmt(macro.get('us10y'), '%')}
-- 米2年債：{fmt(macro.get('us2y'), '%')}
-- 金利差（10年-2年）：{fmt(macro.get('yield_spread'), '%')}
-  ※マイナス=逆イールド・景気後退シグナル
-- ドル円：{fmt(macro.get('usd_jpy'), '円')}
-- DXY：{fmt(macro.get('dxy'))}
-- 原油：{fmt(macro.get('oil_price'), 'ドル')}
-- 金：{fmt(macro.get('gold_price'), 'ドル')}
-- S&P500トレンド：{fmt(macro.get('sp500_trend'))}
-
-【ニュース】
-{news_summary}
-
+{tech_block}
+{macro_block}
+{news_block}
 【参考スコア】
 - 総合スコア：{fmt(score, '点')}
 

@@ -61,3 +61,6 @@ dynamodb = boto3.resource('dynamodb', region_name='ap-northeast-1')
 market_cache_table = dynamodb.Table('market_cache')
 stock_cache_table  = dynamodb.Table('stock_cache')
 user_profile_table = dynamodb.Table('user_profiles')
+
+# AI予測の記録テーブル（的中率の測定用。キャッシュではないのでTTLなし）
+predictions_table  = dynamodb.Table('ai_predictions')

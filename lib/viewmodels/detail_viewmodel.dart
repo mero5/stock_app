@@ -86,6 +86,16 @@ class DetailViewModel extends ChangeNotifier {
   /// 未取得・未設定の場合はnull（デフォルト設定で動作する）
   Map<String, dynamic>? userProfile;
 
+  /// 直近の決算発表日（YYYY-MM-DD）。取得できない場合はnull
+  ///
+  /// AI分析に渡して決算アラート（決算跨ぎリスク）を出させるために使う。
+  /// 以前は取得していながらAI分析に渡しておらず、
+  /// 決算アラートが常に「なし」になっていた。
+  String? earningsDate;
+
+  /// 直近の配当落ち日（YYYY-MM-DD）。取得できない場合はnull
+  String? dividendRecordDate;
+
   // ============================================================
   // ユーザープロファイル
   // ============================================================
@@ -103,6 +113,45 @@ class DetailViewModel extends ChangeNotifier {
       notifyListeners();
     } catch (e) {
       debugPrint('プロファイル取得エラー: $e');
+    }
+  }
+
+  // ============================================================
+  // 銘柄イベント（決算日・配当落ち日）
+  // ============================================================
+
+  /// 決算発表日・配当落ち日を取得する
+  ///
+  /// `/stock/events` はスケジュール画面でも使っているAPI。
+  /// ここで取得した決算日をAI分析に渡すことで、
+  /// 「3日後に決算 → 様子見推奨」といった判断ができるようになる。
+  ///
+  /// 取得できなくてもAI分析は続行できるため、失敗は握り潰す。
+  Future<void> loadEvents(String code) async {
+    try {
+      final events = await StockService.getStockEvents([code]);
+
+      // 今日以降で一番近い日付を選ぶ（過去の決算日は意味がない）
+      final today = DateTime.now();
+      String? pickNearest(String type) {
+        final dates =
+            events
+                .where((e) => e['type'] == type && e['date'] != null)
+                .map((e) => e['date'].toString())
+                .where((d) {
+                  final dt = DateTime.tryParse(d);
+                  return dt != null && !dt.isBefore(DateTime(today.year, today.month, today.day));
+                })
+                .toList()
+              ..sort();
+        return dates.isEmpty ? null : dates.first;
+      }
+
+      earningsDate = pickNearest('earnings');
+      dividendRecordDate = pickNearest('ex_dividend');
+      notifyListeners();
+    } catch (e) {
+      debugPrint('銘柄イベント取得エラー: $e');
     }
   }
 
@@ -229,6 +278,9 @@ class DetailViewModel extends ChangeNotifier {
         period: selectedPeriod,
         sectorData: sectorData,
         userProfile: userProfile,
+        earningsDate: earningsDate,
+        dividendRecordDate: dividendRecordDate,
+        userId: await AuthService.getUserId(),
       );
 
       // タイマー停止・進捗を100%にして完了

@@ -94,6 +94,8 @@ import routers.market as market_router
 import routers.youtube as youtube_router
 import routers.ai as ai_router
 import routers.user as user_router
+import routers.stats as stats_router
+import routers.notices as notices_router
 
 stock_router.stocks_master   = stocks_master
 stock_router.JQUANTS_API_KEY = JQUANTS_API_KEY
@@ -109,6 +111,8 @@ app.include_router(market_router.router)
 app.include_router(youtube_router.router)
 app.include_router(ai_router.router)
 app.include_router(user_router.router)
+app.include_router(stats_router.router)
+app.include_router(notices_router.router)
 
 
 # ===================================================

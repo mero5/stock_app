@@ -11,12 +11,38 @@ deploy.bat
 | 手順 | 内容 |
 |---|---|
 | 1 | `backend/main.py` と `backend/requirements.txt` を転送 |
-| 2 | `backend/routers/` と `backend/services/` をディレクトリごと転送 |
+| 2 | **`backend/` 配下のサブディレクトリを自動検出して転送**（`__pycache__` と `venv` は除外） |
 | 3 | `pip install -r requirements.txt` と `__pycache__` の掃除 |
-| 4 | `sudo systemctl restart stockapp` でサービス再起動 |
-| 5 | `systemctl is-active` と `/health` で起動確認、直近ログを表示 |
+| 4 | **起動テスト（`python -c "import main"`）** |
+| 5 | `sudo systemctl restart stockapp` でサービス再起動 |
+| 6 | `systemctl is-active` と `/health` で起動確認、直近ログを表示 |
 
 サーバー側の `.env` は転送対象に入れていないので上書きされない。
+
+### 手順2：サブディレクトリの自動検出
+
+`routers/` `services/` `config/` などをハードコードせず、`for /d` で自動的に拾う。
+
+> **なぜこうしたか**：以前は `routers/` と `services/` を名前で指定していたため、
+> 新しく `config/` を追加したときに転送されず、
+> `ModuleNotFoundError: No module named 'config'` でサービスが起動不能になった。
+> ディレクトリを追加するたびに deploy.bat を直す必要がある作りは事故のもとなので、自動検出にしている。
+
+### 手順4：起動テスト（重要）
+
+再起動する**前に**サーバー上で `import main` を実行し、失敗したらそこでデプロイを中止する。
+
+```
+import に失敗
+     ↓
+「IMPORT FAILED」を表示して終了（exit 1）
+     ↓
+稼働中のサービスには一切触れない  ← 旧バージョンのまま動き続ける
+```
+
+`stockapp.service` は `Restart=always` なので、壊れたコードを入れて再起動すると
+**5秒ごとに起動失敗を繰り返す状態**になり、サービスが完全に停止する。
+それを防ぐための安全装置。
 
 ## サーバー構成
 

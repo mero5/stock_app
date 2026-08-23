@@ -13,6 +13,8 @@ import 'package:flutter/material.dart';
 import '../services/auth_service.dart';
 import '../services/user_profile_service.dart';
 import 'profile_setup_screen.dart';
+import 'ai_stats_screen.dart';
+import 'notice_history_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -81,7 +83,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
               padding: const EdgeInsets.all(16),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
-                children: [_buildProfileCard()],
+                children: [
+                  _buildProfileCard(),
+                  const SizedBox(height: 12),
+                  _buildAiStatsCard(),
+                  const SizedBox(height: 12),
+                  _buildNoticeHistoryCard(),
+                ],
               ),
             ),
     );
@@ -90,6 +98,64 @@ class _SettingsScreenState extends State<SettingsScreen> {
   // ============================================================
   // UIパーツ
   // ============================================================
+
+  /// お知らせ履歴画面への入口
+  ///
+  /// アップデート告知のポップアップを閉じてしまっても、
+  /// ここから過去の内容を読み直せる。
+  Widget _buildNoticeHistoryCard() {
+    return Card(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: ListTile(
+        leading: const CircleAvatar(
+          backgroundColor: Colors.orange,
+          child: Icon(Icons.campaign, color: Colors.white, size: 20),
+        ),
+        title: const Text(
+          'お知らせ履歴',
+          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+        ),
+        subtitle: const Text(
+          'これまでのアップデート内容を確認する',
+          style: TextStyle(fontSize: 12),
+        ),
+        trailing: const Icon(Icons.chevron_right),
+        onTap: () => Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const NoticeHistoryScreen()),
+        ),
+      ),
+    );
+  }
+
+  /// AI予測の成績画面への入口
+  ///
+  /// 「AI分析がどれくらい当たっているか」を確認できる。
+  /// プロンプトを改良したときの効果を測るための画面。
+  Widget _buildAiStatsCard() {
+    return Card(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: ListTile(
+        leading: const CircleAvatar(
+          backgroundColor: Colors.blue,
+          child: Icon(Icons.insights, color: Colors.white, size: 20),
+        ),
+        title: const Text(
+          'AI予測の成績',
+          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+        ),
+        subtitle: const Text(
+          '過去の予測がどれくらい当たったかを確認する',
+          style: TextStyle(fontSize: 12),
+        ),
+        trailing: const Icon(Icons.chevron_right),
+        onTap: () => Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const AiStatsScreen()),
+        ),
+      ),
+    );
+  }
 
   /// 投資プロファイルカードを構築する
   ///
