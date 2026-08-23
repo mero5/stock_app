@@ -49,6 +49,34 @@ class AuthService {
     return session.isSignedIn;
   }
 
+  /// セッションが実際に使える状態かを確認する
+  ///
+  /// isSignedIn は「サインアウトしていない」ことしか示さない。
+  /// リフレッシュトークンが期限切れになってもAmplifyは古いトークンを
+  /// 保持し続けるため、isSignedIn は true のままになる。
+  /// そのため、トークンを実際に取り出せるかどうかで判定する。
+  ///
+  /// 返り値：使えるならtrue、期限切れ・未ログインならfalse。
+  /// 通信エラー等で判断できない場合は、誤ってログアウトさせないようtrueを返す。
+  static Future<bool> hasValidSession() async {
+    try {
+      final session = await Amplify.Auth.fetchAuthSession();
+      if (!session.isSignedIn) return false;
+
+      // 期限切れの場合、ここでSessionExpiredExceptionがthrowされる
+      (session as CognitoAuthSession).userPoolTokensResult.value;
+      return true;
+    } on SessionExpiredException {
+      return false;
+    } on SignedOutException {
+      return false;
+    } catch (e) {
+      // 圏外・通信エラー等では期限切れか判断できないため維持する
+      debugPrint('セッション確認エラー: $e');
+      return true;
+    }
+  }
+
   // ============================================================
   // 新規登録
   // ============================================================

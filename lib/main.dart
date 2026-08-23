@@ -16,11 +16,15 @@ import 'screens/login_screen.dart';
 import 'screens/home_screen.dart';
 import 'viewmodels/home_viewmodel.dart';
 import 'viewmodels/portfolio_viewmodel.dart';
+import 'services/auth_service.dart';
+import 'services/session_guard.dart';
 import '../theme/app_theme.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await _configureAmplify();
+  // セッション期限切れの監視を開始する（アプリ全体で一度だけ）
+  SessionGuard.start();
   runApp(const MyApp());
 }
 
@@ -50,6 +54,8 @@ class MyApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => PortfolioViewModel()),
       ],
       child: MaterialApp(
+        // ウィジェットツリー外（SessionGuard）から画面遷移するためのkey
+        navigatorKey: SessionGuard.navigatorKey,
         title: '株アプリ',
         theme: AppTheme.themeData,
         home: const AuthWrapper(),
@@ -79,19 +85,16 @@ class _AuthWrapperState extends State<AuthWrapper> {
   }
 
   /// Cognitoのセッションを確認してログイン状態を判定する
+  ///
+  /// isSignedIn は期限切れでも true のままになるため使わない。
+  /// トークンが実際に使えるかまで見る hasValidSession() で判定する。
   Future<void> _checkAuthStatus() async {
-    try {
-      final result = await Amplify.Auth.fetchAuthSession();
-      setState(() {
-        _isLoggedIn = result.isSignedIn;
-        _isChecking = false;
-      });
-    } catch (e) {
-      setState(() {
-        _isLoggedIn = false;
-        _isChecking = false;
-      });
-    }
+    final valid = await AuthService.hasValidSession();
+    if (!mounted) return;
+    setState(() {
+      _isLoggedIn = valid;
+      _isChecking = false;
+    });
   }
 
   @override
