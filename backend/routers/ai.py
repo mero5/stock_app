@@ -11,7 +11,8 @@ from services.technical import (
     get_macro_data, get_nikkei225_breadth,
     get_earnings_alert, fmt,
     build_short_prompt, build_medium_prompt, build_long_prompt,
-    normalize_priority, DEFAULT_PERIOD_DAYS
+    normalize_priority, DEFAULT_PERIOD_DAYS,
+    resolve_sector_trend
 )
 import math
 from fastapi.responses import JSONResponse
@@ -432,8 +433,6 @@ async def swing_analysis(request: Request):
     period_days = body.get("period_days") or DEFAULT_PERIOD_DAYS
 
     sector_data = body.get("sector_data", {})
-    jp_sectors  = sector_data.get("jp", [])
-    us_sectors  = sector_data.get("us", [])
 
     # ニュース
     news_list = body.get("news", [])
@@ -468,23 +467,13 @@ async def swing_analysis(request: Request):
             )
 
         # セクター突合
-        # ETF・REIT・指数などはyfinanceがsectorを持たずNoneになる。
-        # 空のまま突合すると「"" in 任意の文字列」が常にTrueになり、
-        # 先頭セクターのトレンドを誤って採用してしまうのでスキップする。
-        sector_name  = fund.get("sector") or ""
-        sector_trend = "不明"
-        if sector_name:
-            for s in jp_sectors + us_sectors:
-                s_name = s.get("name") or ""
-                if not s_name:
-                    continue
-                if s_name in sector_name or sector_name in s_name:
-                    # change_pct / trend_5d がNoneでも落ちないようにする
-                    chg = float(s.get("change_pct") or 0)
-                    t5d = float(s.get("trend_5d")   or 0)
-                    sector_trend = f"{chg:+.2f}%（5日:{t5d:+.2f}%）"
-                    break
-        macro["sector_trend"] = sector_trend
+        # yfinanceのsectorは英語（"Consumer Cyclical"）、
+        # /market/sectors のセクター名は日本語（"自動車"）なので、
+        # services/technical.py の対応表を使って突き合わせる。
+        # ETF・REIT等はsectorがNoneになるが、その場合は「不明」を返すだけで落ちない。
+        macro["sector_trend"] = resolve_sector_trend(
+            fund.get("sector"), fund.get("industry"), sector_data, ticker_code
+        )
 
         # 信用残・空売り（フロントから渡すか、後でバッチ化）
         macro["margin_ratio"] = body.get("margin_ratio")

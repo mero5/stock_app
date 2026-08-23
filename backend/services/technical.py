@@ -382,6 +382,128 @@ DEFAULT_PERIOD_DAYS = {
 }
 
 
+# ===================================================
+# セクター名の突合
+#
+# yfinanceの info["sector"] は英語のGICSセクター（例："Consumer Cyclical"）、
+# /market/sectors が返すセクター名は日本語（例："自動車"）。
+# 素の文字列比較では永久に一致せず、セクター騰落が
+# 一度もAIに渡っていなかったため、ここで対応表を持つ。
+# ===================================================
+
+# 英語セクター → 日本のセクターETF名（routers/market.py の jp_sectors のキー）
+SECTOR_EN_TO_JP = {
+    "Technology":             "電気機器",
+    "Communication Services": "情報通信",
+    "Financial Services":     "銀行",
+    "Healthcare":             "医薬品",
+    "Consumer Cyclical":      "小売",
+    "Consumer Defensive":     "食品",
+    "Industrials":            "機械",
+    "Basic Materials":        "化学",
+    "Energy":                 "鉱業",
+    "Real Estate":            "不動産",
+    # Utilities は対応する日本のセクターETFが無いため未定義（→「不明」になる）
+}
+
+# 英語セクター → 米国セクターETF名（routers/market.py の us_sectors のキー）
+SECTOR_EN_TO_US = {
+    "Technology":             "テクノロジー",
+    "Communication Services": "通信",
+    "Financial Services":     "金融",
+    "Healthcare":             "ヘルスケア",
+    "Consumer Cyclical":      "一般消費財",
+    "Consumer Defensive":     "生活必需品",
+    "Industrials":            "資本財",
+    "Basic Materials":        "素材(US)",
+    "Energy":                 "エネルギー",
+    "Real Estate":            "不動産(US)",
+    "Utilities":              "公益",
+}
+
+# 業種（industry）のキーワード → 日本のセクターETF名
+#
+# セクターだけでは粗すぎるため（例：トヨタもイオンも "Consumer Cyclical"）、
+# より細かい industry を優先して見る。
+# ★順番が重要★ 先にマッチしたものを採用するので、
+#   複数キーワードを含む業種名（例："Farm & Heavy Construction Machinery"）が
+#   正しい方に倒れるよう、具体的なものから並べている。
+INDUSTRY_KEYWORD_TO_JP = [
+    (("auto",),                                              "自動車"),
+    (("bank",),                                              "銀行"),
+    (("semiconductor", "electronic", "electrical equipment",
+      "computer hardware", "appliance"),                     "電気機器"),
+    (("machinery", "tools & accessories"),                   "機械"),
+    (("chemical",),                                          "化学"),
+    (("steel", "aluminum", "copper", "industrial metals",
+      "metal fabrication"),                                  "鉄鋼・非鉄"),
+    (("drug", "pharmaceutical", "biotechnolog", "medical"),  "医薬品"),
+    (("software", "internet", "telecom", "information technology",
+      "entertainment", "media", "publishing"),               "情報通信"),
+    (("marine", "airline", "airport", "shipping",
+      "freight"),                                            "海運・空運"),
+    (("construction", "building"),                           "建設"),
+    (("oil", "gas", "coal", "uranium", "mining",
+      "precious metals"),                                    "鉱業"),
+    (("real estate", "reit"),                                "不動産"),
+    (("beverage", "food", "confectioner", "tobacco"),        "食品"),
+    (("farm products", "agricultur", "fish"),                "水産・農林"),
+    (("retail", "department store", "apparel",
+      "discount store", "grocery"),                          "小売"),
+    (("consulting", "staffing", "business services",
+      "security & protection", "education"),                 "サービス"),
+]
+
+
+def resolve_sector_name(sector: str, industry: str, is_jp: bool) -> str | None:
+    """
+    yfinanceのsector/industry（英語）から、セクターETFの日本語名を求める。
+
+    日本株は industry を優先して細かく判定し、
+    決まらなければ sector の対応表にフォールバックする。
+    対応するセクターETFが無い場合は None を返す。
+    """
+    sector   = (sector   or "").strip()
+    industry = (industry or "").strip()
+
+    # すでに日本語名で来ている場合はそのまま使う
+    table = SECTOR_EN_TO_JP if is_jp else SECTOR_EN_TO_US
+    if sector and sector not in table and not sector.isascii():
+        return sector
+
+    if is_jp and industry:
+        low = industry.lower()
+        for keywords, jp_name in INDUSTRY_KEYWORD_TO_JP:
+            if any(k in low for k in keywords):
+                return jp_name
+
+    return table.get(sector)
+
+
+def resolve_sector_trend(sector: str, industry: str,
+                         sector_data: dict, ticker_code: str) -> str:
+    """
+    セクター騰落をプロンプト用の文字列にして返す。
+
+    例："自動車 +1.23%（5日:-0.40%）"
+    判定できない場合（ETF・REIT等でsectorが無い、対応ETFが無い）は「不明」。
+    """
+    is_jp = str(ticker_code).upper().endswith(".T")
+    name  = resolve_sector_name(sector, industry, is_jp)
+    if not name:
+        return "不明"
+
+    candidates = (sector_data or {}).get("jp" if is_jp else "us", []) or []
+    for s in candidates:
+        if s.get("name") != name:
+            continue
+        chg = float(s.get("change_pct") or 0)
+        t5d = float(s.get("trend_5d")   or 0)
+        return f"{name} {chg:+.2f}%（5日:{t5d:+.2f}%）"
+
+    return "不明"
+
+
 def normalize_priority(priority, period: str) -> list:
     """
     フロントから渡された優先順位リストを検証・補完する。
@@ -592,6 +714,9 @@ def build_short_prompt(name, code, tech, fund, macro, breadth,
 【セクター情報】
 - セクター：{sector}
 - 業種：{industry}
+- セクター騰落（連動ETF）：{macro.get('sector_trend', '不明')}
+  ※プラス=そのセクターに資金が入っている／マイナス=抜けている
+  ※「不明」の場合は対応するセクターETFが無い銘柄（ETF・REIT等）なので、ニュース・マクロから推定すること
 
 【ファンダ（参考）】
 - PER：{fmt(fund.get('per'), '倍')} / PBR：{fmt(fund.get('pbr'), '倍')}
@@ -732,6 +857,9 @@ def build_medium_prompt(name, code, tech, fund, macro, breadth,
 【セクター情報】
 - セクター：{sector}
 - 業種：{industry}
+- セクター騰落（連動ETF）：{macro.get('sector_trend', '不明')}
+  ※プラス=そのセクターに資金が入っている／マイナス=抜けている
+  ※「不明」の場合は対応するセクターETFが無い銘柄（ETF・REIT等）なので、ニュース・マクロから推定すること
 
 【ファンダメンタル】
 - PER：{fmt(fund.get('per'), '倍')}
@@ -881,6 +1009,9 @@ def build_long_prompt(name, code, tech, fund, macro, breadth=None,
 【セクター情報】
 - セクター：{sector}
 - 業種：{industry}
+- セクター騰落（連動ETF）：{macro.get('sector_trend', '不明')}
+  ※プラス=そのセクターに資金が入っている／マイナス=抜けている
+  ※「不明」の場合は対応するセクターETFが無い銘柄（ETF・REIT等）なので、ニュース・マクロから推定すること
 
 【需給】
 - 信用倍率：{fmt(macro.get('margin_ratio'), '倍')}

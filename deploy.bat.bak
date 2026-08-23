@@ -1,0 +1,3 @@
+@echo off
+scp -i "C:\Users\s_mor\Downloads\keypea.pem" "C:\Users\s_mor\stock_app\backend\main.py" "C:\Users\s_mor\stock_app\backend\requirements.txt" ubuntu@13.114.75.49:~/stock_backend/
+ssh -i "C:\Users\s_mor\Downloads\keypea.pem" ubuntu@13.114.75.49 "cd ~/stock_backend && source venv/bin/activate && pip install -r requirements.txt --quiet && pkill -f uvicorn; sleep 2; nohup python -m uvicorn main:app --host 0.0.0.0 --port 8000 > ~/stock_backend/uvicorn.log 2>&1 &"
