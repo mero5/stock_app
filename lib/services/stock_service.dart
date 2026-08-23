@@ -15,12 +15,72 @@
 // ============================================================
 
 import 'package:flutter/foundation.dart';
+import 'dart:async';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../config/constants.dart';
 import '../models/stock.dart';
 
 class StockService {
+  /// AI系APIのタイムアウト（GPT-4oの応答が遅いので長めに取る）
+  static const Duration aiTimeout = Duration(seconds: 120);
+
+  // ============================================================
+  // 共通ヘルパー
+  // ============================================================
+
+  /// AI系APIのレスポンスを必ず Map に正規化する
+  ///
+  /// バックエンドは正常時もエラー時もHTTP 200 + JSONを返す設計だが、
+  /// サーバーが落ちている・プロキシがHTMLを返す等で
+  /// 200以外やJSON以外が返ることがある。
+  /// その場合も画面が黙って空にならないよう、
+  /// 必ず {'error': ..., 'error_detail': ...} の形にして返す。
+  static Map<String, dynamic> _normalizeAiResponse(http.Response res) {
+    if (res.statusCode != 200) {
+      debugPrint('APIエラー: HTTP ${res.statusCode} / ${res.body}');
+      return {
+        'error': 'サーバーでエラーが発生しました（HTTP ${res.statusCode}）。'
+            'しばらく待ってからもう一度お試しください。',
+        'error_type': 'http_${res.statusCode}',
+        'error_detail': res.body,
+      };
+    }
+    try {
+      final decoded = jsonDecode(res.body);
+      if (decoded is Map<String, dynamic>) return decoded;
+      return {
+        'error': 'サーバーの応答が想定外の形式でした。',
+        'error_type': 'invalid_format',
+        'error_detail': res.body,
+      };
+    } catch (e) {
+      return {
+        'error': 'サーバーの応答を読み取れませんでした。',
+        'error_type': 'decode_error',
+        'error_detail': '$e\n${res.body}',
+      };
+    }
+  }
+
+  /// 通信そのものが失敗したときのエラーMapを作る
+  static Map<String, dynamic> _networkError(Object e) {
+    if (e is TimeoutException) {
+      return {
+        'error': '分析に時間がかかりすぎたため中断しました。'
+            'サーバーが混雑している可能性があります。時間をおいて再度お試しください。',
+        'error_type': 'timeout',
+        'error_detail': '$e',
+      };
+    }
+    return {
+      'error': 'サーバーに接続できませんでした。'
+          'ネットワーク状況を確認してもう一度お試しください。',
+      'error_type': 'connection',
+      'error_detail': '$e',
+    };
+  }
+
   // ============================================================
   // 銘柄情報
   // ============================================================
@@ -187,12 +247,25 @@ class StockService {
   /// ニュース取得・翻訳・センチメント分析を含む。
   /// DetailViewModelのloadNewsで使用する。
   ///
+  /// 失敗しても例外は投げず、{'error': ...} を返す。
+  /// 呼び出し側はerrorキーの有無で成否を判定すること。
+  ///
   /// [code] 銘柄コード
   static Future<Map<String, dynamic>> getAiAnalysis(String code) async {
-    final res = await http.get(
-      Uri.parse('${Constants.backendUrl}/stock/ai_analysis?code=$code'),
-    );
-    return jsonDecode(res.body) as Map<String, dynamic>;
+    try {
+      final res = await http
+          .get(
+            Uri.parse(
+              '${Constants.backendUrl}/stock/ai_analysis'
+              '?code=${Uri.encodeComponent(code)}',
+            ),
+          )
+          .timeout(aiTimeout);
+      return _normalizeAiResponse(res);
+    } catch (e) {
+      debugPrint('ニュース取得通信エラー: $e');
+      return _networkError(e);
+    }
   }
 
   /// AI相談を実行する
@@ -239,10 +312,11 @@ class StockService {
           'high52': high52,
           'low52': low52,
         }),
-      );
-      return jsonDecode(res.body) as Map<String, dynamic>;
+      ).timeout(aiTimeout);
+      return _normalizeAiResponse(res);
     } catch (e) {
-      return {'error': e.toString()};
+      debugPrint('AI相談通信エラー: $e');
+      return _networkError(e);
     }
   }
 
@@ -279,45 +353,47 @@ class StockService {
         : 'priority_long';
 
     try {
-      final res = await http.post(
-        Uri.parse('${Constants.backendUrl}/stock/swing_analysis'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'code': code,
-          'name': name,
-          'period': period,
-          'price': detail['price'],
-          'rsi': lastCandle['rsi'],
-          'macd': lastCandle['macd'],
-          'ma5': detail['candles']?.last?['ma5'],
-          'ma25': detail['candles']?.last?['ma25'],
-          'bb_upper': lastCandle['bb_upper'],
-          'bb_mid': lastCandle['bb_middle'],
-          'bb_lower': lastCandle['bb_lower'],
-          'per': detail['per'],
-          'pbr': detail['pbr'],
-          'roe': detail['roe'],
-          'revenue_growth': detail['revenue_growth'],
-          'news': detail['news'] ?? [],
-          'checks': checks,
-          'sector_data': sectorData ?? {},
-          'risk_level': userProfile?['risk_level'],
-          'analysis_style': userProfile?['analysis_style'],
-          'priority': userProfile?[priorityKey],
-          'period_days': {
-            'short_max': userProfile?['period_short_max_days'],
-            'medium_max': userProfile?['period_medium_max_days'],
-          },
-        }),
-      );
+      final res = await http
+          .post(
+            Uri.parse('${Constants.backendUrl}/stock/swing_analysis'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({
+              'code': code,
+              'name': name,
+              'period': period,
+              'price': detail['price'],
+              'rsi': lastCandle['rsi'],
+              'macd': lastCandle['macd'],
+              'ma5': detail['candles']?.last?['ma5'],
+              'ma25': detail['candles']?.last?['ma25'],
+              'bb_upper': lastCandle['bb_upper'],
+              'bb_mid': lastCandle['bb_middle'],
+              'bb_lower': lastCandle['bb_lower'],
+              'per': detail['per'],
+              'pbr': detail['pbr'],
+              'roe': detail['roe'],
+              'revenue_growth': detail['revenue_growth'],
+              'news': detail['news'] ?? [],
+              'checks': checks,
+              'sector_data': sectorData ?? {},
+              'risk_level': userProfile?['risk_level'],
+              'analysis_style': userProfile?['analysis_style'],
+              'priority': userProfile?[priorityKey],
+              'period_days': {
+                'short_max': userProfile?['period_short_max_days'],
+                'medium_max': userProfile?['period_medium_max_days'],
+              },
+            }),
+          )
+          .timeout(aiTimeout);
       debugPrint('=== AI診断レスポンス ===');
       debugPrint('ステータス: ${res.statusCode}');
       debugPrint('ボディ: ${res.body}');
-      return jsonDecode(res.body) as Map<String, dynamic>;
+      return _normalizeAiResponse(res);
     } catch (e) {
       debugPrint('=== AI診断通信エラー ===');
       debugPrint('エラー内容: $e');
-      return {'error': e.toString()};
+      return _networkError(e);
     }
   }
 

@@ -11,6 +11,7 @@ import '../services/auth_service.dart';
 import '../services/user_profile_service.dart';
 import '../services/stock_service.dart';
 import '../widgets/api_error_banner.dart';
+import '../widgets/error_dialog.dart';
 import '../theme/app_theme.dart';
 
 class PortfolioScreen extends StatefulWidget {
@@ -48,6 +49,25 @@ class _PortfolioScreenState extends State<PortfolioScreen> {
     final profile = await UserProfileService.getProfile(userId);
     if (mounted) {
       context.read<PortfolioViewModel>().setUserProfile(profile);
+    }
+  }
+
+  /// AI診断を実行し、失敗していたらエラーポップアップを出す
+  ///
+  /// 以前は失敗しても入力画面に戻るだけで、
+  /// ユーザーには「ボタンを押しても何も起きない」ように見えていた。
+  Future<void> _analyze() async {
+    final vm = context.read<PortfolioViewModel>();
+    await vm.analyze();
+    if (!mounted) return;
+    if (vm.analysisError != null) {
+      await ErrorDialog.show(
+        context,
+        title: 'AI診断に失敗しました',
+        message: vm.analysisError!,
+        detail: vm.analysisErrorDetail,
+        onRetry: _analyze,
+      );
     }
   }
 
@@ -158,7 +178,7 @@ class _PortfolioScreenState extends State<PortfolioScreen> {
                         vm.holdings.isEmpty ||
                         !widget.apiAvailable
                     ? null
-                    : () => context.read<PortfolioViewModel>().analyze(),
+                    : _analyze,
                 icon: vm.isAnalyzing
                     ? const SizedBox(
                         width: 16,

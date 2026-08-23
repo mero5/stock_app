@@ -6,6 +6,7 @@ import '../services/stock_service.dart';
 import '../utils/formatter.dart';
 import '../widgets/signal_card.dart';
 import '../widgets/indicator_row.dart';
+import '../widgets/error_dialog.dart';
 import 'dart:async';
 import 'package:provider/provider.dart';
 import '../viewmodels/detail_viewmodel.dart';
@@ -29,6 +30,75 @@ class _DetailScreenState extends State<DetailScreen> {
       context.read<DetailViewModel>().loadDetail(widget.code);
       context.read<DetailViewModel>().loadUserProfile();
     });
+  }
+
+  // ============================================================
+  // AIレスポンスの安全な取り出し
+  //
+  // AIが返すJSONは、指示どおりの構造にならないことがある。
+  // （Mapのはずが文字列、{value, reason} のはずが数値だけ など）
+  // そのまま `as Map` やチェーンアクセスをすると build 中に例外が出て、
+  // リリースビルドでは画面が真っ白／灰色になり
+  // 「100%になったのに何も表示されない」原因になる。
+  // そのため取り出しは必ず下のヘルパー経由にする。
+  // ============================================================
+
+  /// Mapでなければ空Mapとして扱う
+  static Map _asMap(dynamic v) => v is Map ? v : const {};
+
+  /// node が Map のときだけ key の値を返す（そうでなければ null）
+  static dynamic _sub(dynamic node, String key) =>
+      node is Map ? node[key] : null;
+
+  /// node[key] を文字列として取り出す（取れなければ [fallback]）
+  static String _str(dynamic node, String key, {String fallback = ''}) {
+    final v = _sub(node, key);
+    if (v == null) return fallback;
+    final s = v.toString();
+    return s.isEmpty ? fallback : s;
+  }
+
+  // ============================================================
+  // AI分析・ニュース取得（失敗したらポップアップで知らせる）
+  // ============================================================
+
+  /// AI分析を実行し、失敗していたらエラーポップアップを出す
+  ///
+  /// ViewModel側は状態を持つだけにして、
+  /// ダイアログ表示（BuildContextが必要な処理）は画面側で行う。
+  Future<void> _runAiAnalysis(Map<String, dynamic> lastCandle) async {
+    final vm = context.read<DetailViewModel>();
+    await vm.runAiAnalysis(
+      code: widget.code,
+      name: widget.name,
+      lastCandle: lastCandle,
+    );
+    if (!mounted) return;
+    if (vm.analysisError != null) {
+      await ErrorDialog.show(
+        context,
+        title: 'AI分析に失敗しました',
+        message: vm.analysisError!,
+        detail: vm.analysisErrorDetail,
+        onRetry: () => _runAiAnalysis(lastCandle),
+      );
+    }
+  }
+
+  /// ニュースを取得し、失敗していたらエラーポップアップを出す
+  Future<void> _loadNews() async {
+    final vm = context.read<DetailViewModel>();
+    await vm.loadNews(widget.code);
+    if (!mounted) return;
+    if (vm.newsError != null) {
+      await ErrorDialog.show(
+        context,
+        title: 'ニュースの取得に失敗しました',
+        message: vm.newsError!,
+        detail: vm.newsErrorDetail,
+        onRetry: _loadNews,
+      );
+    }
   }
 
   @override
@@ -1008,13 +1078,7 @@ class _DetailScreenState extends State<DetailScreen> {
           SizedBox(
             width: double.infinity,
             child: ElevatedButton.icon(
-              onPressed: vm.isAnalyzing
-                  ? null
-                  : () => context.read<DetailViewModel>().runAiAnalysis(
-                      code: widget.code,
-                      name: widget.name,
-                      lastCandle: lastCandle,
-                    ),
+              onPressed: vm.isAnalyzing ? null : () => _runAiAnalysis(lastCandle),
               icon: vm.isAnalyzing
                   ? const SizedBox(
                       width: 16,
@@ -1111,9 +1175,24 @@ class _DetailScreenState extends State<DetailScreen> {
               style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 8),
+            // 取得に失敗したまま空になっている場合は理由を表示する
+            if (vm.newsError != null) ...[
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 32),
+                child: Text(
+                  vm.newsError!,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: Colors.red,
+                    height: 1.5,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+            ],
             ElevatedButton.icon(
-              onPressed: () =>
-                  context.read<DetailViewModel>().loadNews(widget.code),
+              onPressed: _loadNews,
               icon: const Icon(Icons.refresh),
               label: const Text('ニュースを取得する'),
             ),
@@ -1269,12 +1348,12 @@ class _DetailScreenState extends State<DetailScreen> {
     }
 
     final period = r['_period'] as String? ?? vm.selectedPeriod;
-    final verdict = r['verdict'] as Map? ?? {};
-    final prob = r['probability'] as Map? ?? {};
-    final conf = r['confidence'] as Map? ?? {};
-    final summary = r['summary'] as String? ?? '';
+    final verdict = _asMap(r['verdict']);
+    final prob = _asMap(r['probability']);
+    final conf = _asMap(r['confidence']);
+    final summary = _str(r, 'summary');
 
-    final verdictValue = verdict['value'] as String? ?? 'sideways';
+    final verdictValue = _str(verdict, 'value', fallback: 'sideways');
     final verdictMap = {
       'up': ('上昇', Colors.red, Icons.trending_up),
       'sideways': ('様子見', Colors.grey, Icons.trending_flat),
@@ -1333,10 +1412,10 @@ class _DetailScreenState extends State<DetailScreen> {
                     ),
                   ],
                 ),
-                if ((verdict['reason'] ?? '').isNotEmpty) ...[
+                if (_str(verdict, 'reason').isNotEmpty) ...[
                   const SizedBox(height: 10),
                   Text(
-                    verdict['reason'],
+                    _str(verdict, 'reason'),
                     style: const TextStyle(
                       fontSize: 13,
                       color: Colors.black87,
@@ -1370,12 +1449,12 @@ class _DetailScreenState extends State<DetailScreen> {
                   ),
                 ),
                 const SizedBox(height: 12),
-                _probBar('上昇', prob['up']?['value'] ?? 0, Colors.red),
-                if ((prob['up']?['reason'] ?? '').isNotEmpty)
+                _probBar('上昇', _sub(prob['up'], 'value') ?? 0, Colors.red),
+                if (_str(prob['up'], 'reason').isNotEmpty)
                   Padding(
                     padding: const EdgeInsets.only(left: 56, top: 2, bottom: 6),
                     child: Text(
-                      prob['up']['reason'],
+                      _str(prob['up'], 'reason'),
                       style: const TextStyle(
                         fontSize: 11,
                         color: Colors.black45,
@@ -1383,12 +1462,12 @@ class _DetailScreenState extends State<DetailScreen> {
                       ),
                     ),
                   ),
-                _probBar('様子見', prob['sideways']?['value'] ?? 0, Colors.grey),
-                if ((prob['sideways']?['reason'] ?? '').isNotEmpty)
+                _probBar('様子見', _sub(prob['sideways'], 'value') ?? 0, Colors.grey),
+                if (_str(prob['sideways'], 'reason').isNotEmpty)
                   Padding(
                     padding: const EdgeInsets.only(left: 56, top: 2, bottom: 6),
                     child: Text(
-                      prob['sideways']['reason'],
+                      _str(prob['sideways'], 'reason'),
                       style: const TextStyle(
                         fontSize: 11,
                         color: Colors.black45,
@@ -1396,12 +1475,12 @@ class _DetailScreenState extends State<DetailScreen> {
                       ),
                     ),
                   ),
-                _probBar('下落', prob['down']?['value'] ?? 0, Colors.green),
-                if ((prob['down']?['reason'] ?? '').isNotEmpty)
+                _probBar('下落', _sub(prob['down'], 'value') ?? 0, Colors.green),
+                if (_str(prob['down'], 'reason').isNotEmpty)
                   Padding(
                     padding: const EdgeInsets.only(left: 56, top: 2, bottom: 6),
                     child: Text(
-                      prob['down']['reason'],
+                      _str(prob['down'], 'reason'),
                       style: const TextStyle(
                         fontSize: 11,
                         color: Colors.black45,
@@ -1462,13 +1541,13 @@ class _DetailScreenState extends State<DetailScreen> {
                       ),
                     ),
                     const SizedBox(width: 8),
-                    _confidenceBadge(conf['value'] as String? ?? 'low'),
+                    _confidenceBadge(_str(conf, 'value', fallback: 'low')),
                   ],
                 ),
-                if ((conf['reason'] ?? '').isNotEmpty) ...[
+                if (_str(conf, 'reason').isNotEmpty) ...[
                   const SizedBox(height: 6),
                   Text(
-                    conf['reason'],
+                    _str(conf, 'reason'),
                     style: const TextStyle(
                       fontSize: 11,
                       color: Colors.black54,
@@ -2124,7 +2203,7 @@ class _DetailScreenState extends State<DetailScreen> {
 
   // 短期：価格戦略カード
   Widget _buildPriceStrategyCard(Map<String, dynamic> r, DetailViewModel vm) {
-    final price = r['price_strategy'] as Map? ?? {};
+    final price = _asMap(r['price_strategy']);
     if (price.isEmpty) return const SizedBox();
     return Card(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
@@ -2141,23 +2220,23 @@ class _DetailScreenState extends State<DetailScreen> {
             const SizedBox(height: 10),
             _priceRow(
               'エントリー',
-              price['entry']?['value']?.toString() ?? '-',
+              _sub(price['entry'], 'value')?.toString() ?? '-',
               Colors.blue,
-              price['entry']?['reason'] ?? '',
+              _str(price['entry'], 'reason'),
             ),
             const Divider(height: 16),
             _priceRow(
               '損切り',
-              '¥${price['stop_loss']?['value'] ?? '-'}',
+              '¥${_sub(price['stop_loss'], 'value') ?? '-'}',
               Colors.red,
-              price['stop_loss']?['reason'] ?? '',
+              _str(price['stop_loss'], 'reason'),
             ),
             const Divider(height: 16),
             _priceRow(
               '利確',
-              '¥${price['take_profit']?['value'] ?? '-'}',
+              '¥${_sub(price['take_profit'], 'value') ?? '-'}',
               Colors.green,
-              price['take_profit']?['reason'] ?? '',
+              _str(price['take_profit'], 'reason'),
             ),
           ],
         ),
@@ -2167,8 +2246,8 @@ class _DetailScreenState extends State<DetailScreen> {
 
   // 中期：価格見通し＋トレンド強度カード
   Widget _buildMidTermCards(Map<String, dynamic> r, DetailViewModel vm) {
-    final trend = r['trend_analysis'] as Map? ?? {};
-    final outlook = r['price_outlook'] as Map? ?? {};
+    final trend = _asMap(r['trend_analysis']);
+    final outlook = _asMap(r['price_outlook']);
     return Column(
       children: [
         if (trend.isNotEmpty)
@@ -2228,10 +2307,10 @@ class _DetailScreenState extends State<DetailScreen> {
 
   // 長期：ファンダ分析＋バリュエーション
   Widget _buildLongTermCards(Map<String, dynamic> r, DetailViewModel vm) {
-    final funda = r['fundamental_analysis'] as Map? ?? {};
-    final val = r['valuation_analysis'] as Map? ?? {};
-    final ltRisk = r['long_term_risk'] as Map? ?? {};
-    final outlook = r['price_outlook'] as Map? ?? {};
+    final funda = _asMap(r['fundamental_analysis']);
+    final val = _asMap(r['valuation_analysis']);
+    final ltRisk = _asMap(r['long_term_risk']);
+    final outlook = _asMap(r['price_outlook']);
     return Column(
       children: [
         if (funda.isNotEmpty)
@@ -2339,7 +2418,7 @@ class _DetailScreenState extends State<DetailScreen> {
 
   // 中期：ファンダカード
   Widget _buildFundaCard(Map<String, dynamic> r, DetailViewModel vm) {
-    final funda = r['fundamental_analysis'] as Map? ?? {};
+    final funda = _asMap(r['fundamental_analysis']);
     if (funda.isEmpty) return const SizedBox();
     return Card(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
@@ -2479,7 +2558,7 @@ class _DetailScreenState extends State<DetailScreen> {
 
   // マクロ分析カード（全期間共通）
   Widget _buildMacroCard(Map<String, dynamic> r, DetailViewModel vm) {
-    final macro = r['macro_analysis'] as Map? ?? {};
+    final macro = _asMap(r['macro_analysis']);
     if (macro.isEmpty) return const SizedBox();
     return Card(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
@@ -2847,10 +2926,10 @@ class _DetailScreenState extends State<DetailScreen> {
 
   void _showPromptSheet(Map<String, dynamic> result) {
     final prompt = result['_prompt'] as String? ?? 'プロンプト未取得';
-    final tech = result['_tech_data'] as Map? ?? {};
-    final fund = result['_fund_data'] as Map? ?? {};
-    final macro = result['_macro_data'] as Map? ?? {};
-    final breadth = result['_breadth_data'] as Map? ?? {};
+    final tech = _asMap(result['_tech_data']);
+    final fund = _asMap(result['_fund_data']);
+    final macro = _asMap(result['_macro_data']);
+    final breadth = _asMap(result['_breadth_data']);
 
     showModalBottomSheet(
       context: context,

@@ -11,6 +11,7 @@
 // ============================================================
 
 import 'package:flutter/material.dart';
+import 'dart:async';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../config/constants.dart';
@@ -31,6 +32,16 @@ class PortfolioViewModel extends ChangeNotifier {
 
   /// 診断中フラグ（trueの間はローディング表示）
   bool isAnalyzing = false;
+
+  /// 直近の診断エラー（成功した場合はnull）
+  ///
+  /// analyze() の完了後に画面側がこれを見てポップアップを出す。
+  /// 以前はcatchでログを出すだけだったため、
+  /// 失敗しても入力画面のまま何も表示されなかった。
+  String? analysisError;
+
+  /// 直近の診断エラーの技術的な詳細（ポップアップの折りたたみに表示）
+  String? analysisErrorDetail;
 
   /// デバッグ用：最後にAIに送ったプロンプトのJSON文字列
   String lastPrompt = '';
@@ -169,6 +180,8 @@ class PortfolioViewModel extends ChangeNotifier {
     // ローディング開始
     isAnalyzing = true;
     result = null;
+    analysisError = null;
+    analysisErrorDetail = null;
     notifyListeners();
 
     try {
@@ -198,11 +211,34 @@ class PortfolioViewModel extends ChangeNotifier {
           )
           .timeout(const Duration(seconds: 120)); // GPT-4oの応答を待つため長めに設定
 
-      // レスポンスをMapに変換して保存
-      result = jsonDecode(res.body) as Map<String, dynamic>;
+      if (res.statusCode != 200) {
+        // サーバーが500等を返した場合。
+        // ステータスを見ずにjsonDecodeしていたため、
+        // エラー本文を結果として扱って空の診断画面が出ていた。
+        debugPrint('診断エラー: HTTP ${res.statusCode} / ${res.body}');
+        analysisError = 'サーバーでエラーが発生しました（HTTP ${res.statusCode}）。'
+            'しばらく待ってからもう一度お試しください。';
+        analysisErrorDetail = res.body;
+      } else {
+        final decoded = jsonDecode(res.body) as Map<String, dynamic>;
+        final err = decoded['error'];
+        if (err != null) {
+          // バックエンドはエラーもHTTP 200で返すのでここで見分ける
+          debugPrint('診断エラー: $err');
+          analysisError = err.toString();
+          analysisErrorDetail = decoded['error_detail']?.toString();
+        } else {
+          result = decoded;
+        }
+      }
     } catch (e) {
-      // エラーはログに出力（UIへのエラー表示はScreen側で行う）
       debugPrint('診断エラー: $e');
+      analysisError = e is TimeoutException
+          ? '診断に時間がかかりすぎたため中断しました。'
+                '銘柄数を減らすか、時間をおいて再度お試しください。'
+          : 'サーバーに接続できませんでした。'
+                'ネットワーク状況を確認してもう一度お試しください。';
+      analysisErrorDetail = e.toString();
     } finally {
       // 成功・失敗どちらでもローディングを終了
       isAnalyzing = false;

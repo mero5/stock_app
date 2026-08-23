@@ -58,6 +58,21 @@ class DetailViewModel extends ChangeNotifier {
   /// AI分析のプログレスバーの進捗（0.0〜1.0）
   double analysisProgress = 0.0;
 
+  /// 直近のAI分析エラー（成功した場合はnull）
+  ///
+  /// runAiAnalysis の完了後に画面側がこれを見てポップアップを出す。
+  /// 以前は失敗しても画面に何も出ないことがあったため追加した。
+  String? analysisError;
+
+  /// 直近のAI分析エラーの技術的な詳細（ポップアップの折りたたみに表示）
+  String? analysisErrorDetail;
+
+  /// 直近のニュース取得エラー（成功した場合はnull）
+  String? newsError;
+
+  /// 直近のニュース取得エラーの技術的な詳細
+  String? newsErrorDetail;
+
   /// ニュース一覧
   List<Map<String, dynamic>> newsItems = [];
 
@@ -176,9 +191,11 @@ class DetailViewModel extends ChangeNotifier {
   }) async {
     if (detail == null) return;
 
-    // ローディング開始・前回の結果をリセット
+    // ローディング開始・前回の結果とエラーをリセット
     isAnalyzing = true;
     aiResult = null;
+    analysisError = null;
+    analysisErrorDetail = null;
     analysisProgress = 0.0;
     notifyListeners();
 
@@ -218,6 +235,15 @@ class DetailViewModel extends ChangeNotifier {
       progressTimer.cancel();
       analysisProgress = 1.0;
       aiResult = result;
+
+      // errorキーが入っていれば失敗扱いにする
+      // （サーバーはエラーもHTTP 200で返すため、ここで見分ける必要がある）
+      final err = result['error'];
+      if (err != null) {
+        analysisError = err.toString();
+        analysisErrorDetail = result['error_detail']?.toString();
+        debugPrint('AI分析エラー: $analysisError / $analysisErrorDetail');
+      }
       notifyListeners();
 
       // 完了表示を少し見せてからローディングを終了
@@ -225,7 +251,9 @@ class DetailViewModel extends ChangeNotifier {
     } catch (e) {
       progressTimer.cancel();
       debugPrint('AI分析エラー: $e');
-      aiResult = {'error': '予期せぬエラーが発生しました。しばらく待ってからもう一度お試しください。'};
+      analysisError = '予期せぬエラーが発生しました。しばらく待ってからもう一度お試しください。';
+      analysisErrorDetail = e.toString();
+      aiResult = {'error': analysisError, 'error_detail': analysisErrorDetail};
       analysisProgress = 0.0;
       notifyListeners();
     } finally {
@@ -249,6 +277,8 @@ class DetailViewModel extends ChangeNotifier {
   Future<void> loadNews(String code) async {
     // ローディング開始
     isLoadingNews = true;
+    newsError = null;
+    newsErrorDetail = null;
     newsProgress = 0.0;
     notifyListeners();
 
@@ -271,11 +301,22 @@ class DetailViewModel extends ChangeNotifier {
       // ニュース取得はAI分析APIを流用
       // レスポンスの 'news' フィールドにニュース一覧が入っている
       final data = await StockService.getAiAnalysis(code);
-      final news = data['news'] as List? ?? [];
 
       progressTimer.cancel();
       newsProgress = 1.0;
-      newsItems = news.map((n) => n as Map<String, dynamic>).toList();
+
+      // errorキーがあれば失敗扱い
+      // （以前はここを見ておらず、失敗しても空リストのまま
+      //   「100%になったのに何も出ない」状態になっていた）
+      final err = data['error'];
+      if (err != null) {
+        newsError = err.toString();
+        newsErrorDetail = data['error_detail']?.toString();
+        debugPrint('ニュース取得エラー: $newsError / $newsErrorDetail');
+      } else {
+        final news = data['news'] as List? ?? [];
+        newsItems = news.map((n) => n as Map<String, dynamic>).toList();
+      }
       notifyListeners();
 
       // 完了表示を少し見せる
@@ -283,6 +324,9 @@ class DetailViewModel extends ChangeNotifier {
     } catch (e) {
       progressTimer.cancel();
       debugPrint('ニュース取得エラー: $e');
+      newsError = 'ニュースの取得に失敗しました。しばらく待ってからもう一度お試しください。';
+      newsErrorDetail = e.toString();
+      notifyListeners();
     } finally {
       isLoadingNews = false;
       notifyListeners();

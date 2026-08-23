@@ -4,6 +4,8 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from fastapi import APIRouter, Request
 from openai import OpenAI
+import yfinance as yf
+import google.generativeai as genai
 from services.technical import (
     get_technical_data, get_fundamental_data,
     get_macro_data, get_nikkei225_breadth,
@@ -43,6 +45,73 @@ def sanitize(obj):
         print(f"sanitize: != チェックで nan 検出")
         return None
     return obj
+
+
+# ===================================================
+# エラーレスポンス共通化
+# ===================================================
+def classify_error(e: Exception) -> dict:
+    """
+    例外をユーザー向けの日本語メッセージとエラー種別に変換する。
+
+    フロント側はこの error / error_type / error_detail を見て
+    ポップアップを出すため、AI分析系のエラーは必ずこの形で返すこと。
+    """
+    err_str = str(e).lower()
+    if "max_tokens" in err_str:
+        msg, etype = "AIの回答が長すぎて途中で切れました。もう一度お試しください。", "truncated"
+    elif "rate limit" in err_str or "ratelimit" in err_str:
+        msg, etype = "AI分析の利用制限に達しました。しばらく待ってからもう一度お試しください。", "rate_limit"
+    elif "timeout" in err_str or "timed out" in err_str:
+        msg, etype = "AI分析がタイムアウトしました。サーバーが混雑しています。時間をおいて再度お試しください。", "timeout"
+    elif "connection" in err_str or "network" in err_str:
+        msg, etype = "AIサーバーに接続できませんでした。ネットワーク状況を確認してください。", "connection"
+    elif "yfinance" in err_str or "download" in err_str or "no data found" in err_str:
+        msg, etype = "株価データの取得に失敗しました。銘柄コードを確認してください。", "data_fetch"
+    elif "dynamodb" in err_str or "no region" in err_str or "credential" in err_str:
+        msg, etype = "データベースへの接続に失敗しました。管理者にお問い合わせください。", "database"
+    else:
+        msg, etype = "予期せぬエラーが発生しました。しばらく待ってからもう一度お試しください。", "unknown"
+    return {
+        "error": msg,
+        "error_type": etype,
+        "error_detail": f"{type(e).__name__}: {e}",
+    }
+
+
+def error_response(payload: dict) -> Response:
+    """エラー用JSONを返す（HTTPステータスは200のままにしてフロントで扱いやすくする）"""
+    return Response(
+        content=json.dumps(payload, ensure_ascii=False),
+        media_type="application/json",
+    )
+
+
+def call_openai_json(prompt: str, system: str, max_tokens: int = 4000) -> dict:
+    """
+    OpenAIを呼んでJSONを取得する共通処理。
+
+    ・response_format で JSON 以外を返させない
+    ・max_tokens 切れ（finish_reason == "length"）を専用エラーで検出する
+      → これを見逃すと「途中で切れたJSON」をパースして毎回失敗していた
+    """
+    res = openai_client.chat.completions.create(
+        model="gpt-4o",
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user",   "content": prompt},
+        ],
+        max_tokens=max_tokens,
+        response_format={"type": "json_object"},
+    )
+    choice = res.choices[0]
+    if choice.finish_reason == "length":
+        raise ValueError(
+            "AIの回答が長すぎて途中で切れました（max_tokens超過）"
+        )
+    raw = (choice.message.content or "").strip()
+    raw = raw.replace("```json", "").replace("```", "").strip()
+    return json.loads(raw)
 
 
 # ===================================================
@@ -251,7 +320,7 @@ ROE: {roe}
 
     except Exception as e:
         print(f"AI分析エラー: {e}")
-        return {"error": str(e)}
+        return classify_error(e)
 
 
 # ===================================================
@@ -330,7 +399,8 @@ PER: {per}倍 / PBR: {pbr}倍 / ROE: {roe}
         raw = raw.replace("```json", "").replace("```", "").strip()
         return json.loads(raw)
     except Exception as e:
-        return {"error": str(e)}
+        print(f"AI相談エラー: {e}")
+        return classify_error(e)
 
 
 # ===================================================
@@ -382,78 +452,80 @@ async def swing_analysis(request: Request):
         f"{code}.T" if len(code) == 4 and code.isdigit() else code
     )
 
-    # ── データ取得（4関数を並列実行）──
-    loop = asyncio.get_event_loop()
-    with ThreadPoolExecutor(max_workers=4) as executor:
-        tech_f    = loop.run_in_executor(executor, get_technical_data,   ticker_code)
-        fund_f    = loop.run_in_executor(executor, get_fundamental_data, ticker_code)
-        macro_f   = loop.run_in_executor(executor, get_macro_data)
-        breadth_f = loop.run_in_executor(executor, get_nikkei225_breadth)
-        tech, fund, macro, breadth = await asyncio.gather(
-            tech_f, fund_f, macro_f, breadth_f
-        )
-        sector_name  = fund.get("sector", "")
+    # ── データ取得〜AI呼び出しまで丸ごとtryの中に入れる ──
+    # ここをtryの外に置いていたため、yfinanceやセクター突合で落ちると
+    # 素の500が返り「銘柄によって何も表示されない」原因になっていた。
+    try:
+        # ── データ取得（4関数を並列実行）──
+        loop = asyncio.get_event_loop()
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            tech_f    = loop.run_in_executor(executor, get_technical_data,   ticker_code)
+            fund_f    = loop.run_in_executor(executor, get_fundamental_data, ticker_code)
+            macro_f   = loop.run_in_executor(executor, get_macro_data)
+            breadth_f = loop.run_in_executor(executor, get_nikkei225_breadth)
+            tech, fund, macro, breadth = await asyncio.gather(
+                tech_f, fund_f, macro_f, breadth_f
+            )
+
+        # セクター突合
+        # ETF・REIT・指数などはyfinanceがsectorを持たずNoneになる。
+        # 空のまま突合すると「"" in 任意の文字列」が常にTrueになり、
+        # 先頭セクターのトレンドを誤って採用してしまうのでスキップする。
+        sector_name  = fund.get("sector") or ""
         sector_trend = "不明"
-        for s in jp_sectors + us_sectors:
-            if s.get("name") in sector_name or sector_name in s.get("name", ""):
-                sector_trend = f"{s['change_pct']:+.2f}%（5日:{s['trend_5d']:+.2f}%）"
-                break
+        if sector_name:
+            for s in jp_sectors + us_sectors:
+                s_name = s.get("name") or ""
+                if not s_name:
+                    continue
+                if s_name in sector_name or sector_name in s_name:
+                    # change_pct / trend_5d がNoneでも落ちないようにする
+                    chg = float(s.get("change_pct") or 0)
+                    t5d = float(s.get("trend_5d")   or 0)
+                    sector_trend = f"{chg:+.2f}%（5日:{t5d:+.2f}%）"
+                    break
         macro["sector_trend"] = sector_trend
 
-    # 信用残・空売り（フロントから渡すか、後でバッチ化）
-    macro["margin_ratio"] = body.get("margin_ratio")
-    macro["short_ratio"]  = body.get("short_ratio")
+        # 信用残・空売り（フロントから渡すか、後でバッチ化）
+        macro["margin_ratio"] = body.get("margin_ratio")
+        macro["short_ratio"]  = body.get("short_ratio")
 
-    sector   = fund.get("sector")   or "不明"
-    industry = fund.get("industry") or "不明"
+        sector   = fund.get("sector")   or "不明"
+        industry = fund.get("industry") or "不明"
 
-    # 決算アラート判定
-    earnings_alert = get_earnings_alert(earnings_date_str, period, period_days)
+        # 決算アラート判定
+        earnings_alert = get_earnings_alert(earnings_date_str, period, period_days)
 
-    # ── プロンプト選択 ──
-    if period == "短期":
-        prompt = build_short_prompt(
-            name, code, tech, fund, macro, breadth,
-            earnings_alert, news_summary, score, user_profile,
-            sector, industry,
-            priority=priority, period_days=period_days
-        )
-    elif period == "中期":
-        prompt = build_medium_prompt(
-            name, code, tech, fund, macro, breadth,
-            earnings_alert, news_summary, score, user_profile,
-            sector, industry,
-            priority=priority, period_days=period_days
-        )
-    else:
-        prompt = build_long_prompt(
-            name, code, tech, fund, macro,
-            breadth=breadth, earnings_alert=earnings_alert,
-            news_summary=news_summary, score=score, user_profile=user_profile,
-            sector=sector, industry=industry,
-            priority=priority, period_days=period_days
-        )
+        # ── プロンプト選択 ──
+        if period == "短期":
+            prompt = build_short_prompt(
+                name, code, tech, fund, macro, breadth,
+                earnings_alert, news_summary, score, user_profile,
+                sector, industry,
+                priority=priority, period_days=period_days
+            )
+        elif period == "中期":
+            prompt = build_medium_prompt(
+                name, code, tech, fund, macro, breadth,
+                earnings_alert, news_summary, score, user_profile,
+                sector, industry,
+                priority=priority, period_days=period_days
+            )
+        else:
+            prompt = build_long_prompt(
+                name, code, tech, fund, macro,
+                breadth=breadth, earnings_alert=earnings_alert,
+                news_summary=news_summary, score=score, user_profile=user_profile,
+                sector=sector, industry=industry,
+                priority=priority, period_days=period_days
+            )
 
-    # ── AI呼び出し ──
-    raw = ""
-    try:
-        res = openai_client.chat.completions.create(
-            model="gpt-4o",
-            messages=[
-                {
-                    "role": "system",
-                    "content": "あなたは日本株専門アナリストです。必ずJSON形式のみで返してください。理由は具体的かつ詳細に記述してください。"
-                },
-                {
-                    "role": "user",
-                    "content": prompt
-                }
-            ],
-            max_tokens=2500,
+        # ── AI呼び出し ──
+        result = call_openai_json(
+            prompt,
+            system="あなたは日本株専門アナリストです。必ずJSON形式のみで返してください。理由は具体的かつ詳細に記述してください。",
+            max_tokens=4000,
         )
-        raw    = res.choices[0].message.content.strip()
-        raw    = raw.replace("```json", "").replace("```", "").strip()
-        result = json.loads(raw)
         result["_period"]       = period
         result["_ticker"]       = ticker_code
         result["_prompt"]       = prompt
@@ -462,49 +534,21 @@ async def swing_analysis(request: Request):
         result["_macro_data"]   = sanitize(macro)
         result["_breadth_data"] = sanitize(breadth)
         safe = sanitize(result)
-        from fastapi.responses import Response
         return Response(
             content=json.dumps(safe, ensure_ascii=False, default=lambda x: None),
             media_type="application/json"
         )
 
     except json.JSONDecodeError as e:
-        return Response(
-            content=json.dumps({
-                "error": "AI分析結果の解析に失敗しました。もう一度お試しください。",
-                "error_detail": f"JSONパースエラー: {str(e)}",
-                "error_type": "parse_error",
-            }, ensure_ascii=False),
-            media_type="application/json"
-        )
+        print(f"AI診断 JSONパースエラー: {e}")
+        return error_response({
+            "error": "AI分析結果の解析に失敗しました。もう一度お試しください。",
+            "error_detail": f"JSONパースエラー: {str(e)}",
+            "error_type": "parse_error",
+        })
     except Exception as e:
-        err_str = str(e).lower()
-        if "rate limit" in err_str or "ratelimit" in err_str:
-            msg = "AI分析の利用制限に達しました。しばらく待ってからもう一度お試しください。"
-            etype = "rate_limit"
-        elif "timeout" in err_str:
-            msg = "AI分析がタイムアウトしました。サーバーが混雑しています。時間をおいて再度お試しください。"
-            etype = "timeout"
-        elif "connection" in err_str or "network" in err_str:
-            msg = "AIサーバーに接続できませんでした。ネットワーク状況を確認してください。"
-            etype = "connection"
-        elif "yfinance" in err_str or "download" in err_str:
-            msg = "株価データの取得に失敗しました。銘柄コードを確認してください。"
-            etype = "data_fetch"
-        elif "dynamodb" in err_str or "no region" in err_str:
-            msg = "データベースへの接続に失敗しました。管理者にお問い合わせください。"
-            etype = "database"
-        else:
-            msg = "予期せぬエラーが発生しました。しばらく待ってからもう一度お試しください。"
-            etype = "unknown"
-        return Response(
-            content=json.dumps({
-                "error": msg,
-                "error_type": etype,
-                "error_detail": str(e),
-            }, ensure_ascii=False),
-            media_type="application/json"
-        )
+        print(f"AI診断エラー（{ticker_code}）: {type(e).__name__}: {e}")
+        return error_response(classify_error(e))
 
 
 @router.post("/portfolio/diagnosis")
@@ -515,7 +559,12 @@ async def portfolio_diagnosis(request: Request):
     period = body.get("period", "中期")
 
     # マクロ取得（キャッシュ対応済み）
-    macro = get_macro_data()
+    # ここで落ちても500にせず、マクロ無しで診断を続ける
+    try:
+        macro = get_macro_data()
+    except Exception as e:
+        print(f"マクロ取得エラー: {e}")
+        macro = {}
 
     # 各銘柄の株価・テクニカル取得
     enriched = []
@@ -781,55 +830,26 @@ JSONのみ出力（前置き・説明文禁止）。
 """
 
     try:
-        res = openai_client.chat.completions.create(
-            model="gpt-4o",
-            messages=[
-                {"role": "system", "content": "あなたは株式投資の専門アナリストです。必ずJSON形式のみで返してください。"},
-                {"role": "user", "content": prompt}
-            ],
-            max_tokens=3000,
+        result = call_openai_json(
+            prompt,
+            system="あなたは株式投資の専門アナリストです。必ずJSON形式のみで返してください。",
+            max_tokens=4000,
         )
-        raw = res.choices[0].message.content.strip()
-        raw = raw.replace("```json", "").replace("```", "").strip()
-        result = json.loads(raw)
         result["_prompt"] = prompt
         result["_holdings_data"] = sanitize(enriched)
         safe = sanitize(result)
-        from fastapi.responses import Response
         return Response(
             content=json.dumps(safe, ensure_ascii=False, default=lambda x: None),
             media_type="application/json"
         )
-        
+
     except json.JSONDecodeError as e:
-        return JSONResponse(content={
+        print(f"ポートフォリオ診断 JSONパースエラー: {e}")
+        return error_response({
             "error": "AI分析結果の解析に失敗しました。もう一度お試しください。",
             "error_detail": f"JSONパースエラー: {str(e)}",
             "error_type": "parse_error",
-            "raw": raw,
         })
     except Exception as e:
-        err_str = str(e).lower()
-        if "rate limit" in err_str or "ratelimit" in err_str:
-            msg = "AI分析の利用制限に達しました。しばらく待ってからもう一度お試しください。"
-            etype = "rate_limit"
-        elif "timeout" in err_str:
-            msg = "AI分析がタイムアウトしました。サーバーが混雑しています。時間をおいて再度お試しください。"
-            etype = "timeout"
-        elif "connection" in err_str or "network" in err_str:
-            msg = "AIサーバーに接続できませんでした。ネットワーク状況を確認してください。"
-            etype = "connection"
-        elif "yfinance" in err_str or "download" in err_str:
-            msg = "株価データの取得に失敗しました。銘柄コードを確認してください。"
-            etype = "data_fetch"
-        elif "dynamodb" in err_str or "no region" in err_str:
-            msg = "データベースへの接続に失敗しました。管理者にお問い合わせください。"
-            etype = "database"
-        else:
-            msg = "予期せぬエラーが発生しました。しばらく待ってからもう一度お試しください。"
-            etype = "unknown"
-        return JSONResponse(content={
-            "error": msg,
-            "error_type": etype,
-            "error_detail": str(e),
-        })
+        print(f"ポートフォリオ診断エラー: {type(e).__name__}: {e}")
+        return error_response(classify_error(e))
