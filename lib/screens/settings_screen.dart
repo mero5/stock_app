@@ -150,6 +150,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
               _profileRow('投資経験', _profile!['experience']),
               _profileRow('投資対象', _profile!['market']),
               _profileRow('分散方針', _profile!['concentration']),
+              const SizedBox(height: 4),
+              _profileRow('分析期間の目安', _periodDaysSummary()),
+              _profileRow('優先順位（短期）', _prioritySummary('priority_short')),
+              _profileRow('優先順位（中期）', _prioritySummary('priority_medium')),
+              _profileRow('優先順位（長期）', _prioritySummary('priority_long')),
             ],
           ],
         ),
@@ -182,5 +187,27 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ],
       ),
     );
+  }
+
+  /// AI分析の期間日数設定を要約して返す（例：「〜14日 / 15〜90日 / 91日〜」）
+  ///
+  /// プロファイル未設定の場合はデフォルト（短期14日・中期90日）を表示する。
+  String _periodDaysSummary() {
+    final shortMax =
+        (_profile?['period_short_max_days'] as num?)?.toInt() ?? 14;
+    final mediumMax =
+        (_profile?['period_medium_max_days'] as num?)?.toInt() ?? 90;
+    return '〜$shortMax日 / ${shortMax + 1}〜$mediumMax日 / ${mediumMax + 1}日〜';
+  }
+
+  /// AI分析の優先順位（上位3項目）をラベルで要約して返す
+  ///
+  /// [profileKey] 'priority_short' / 'priority_medium' / 'priority_long'
+  /// 未設定の場合は「未設定」と表示する。
+  /// kPriorityLabelsはprofile_setup_screen.dartで定義されている。
+  String _prioritySummary(String profileKey) {
+    final list = (_profile?[profileKey] as List?)?.cast<String>();
+    if (list == null || list.isEmpty) return '未設定';
+    return list.take(3).map((k) => kPriorityLabels[k] ?? k).join(' > ');
   }
 }

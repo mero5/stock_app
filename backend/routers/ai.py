@@ -8,7 +8,8 @@ from services.technical import (
     get_technical_data, get_fundamental_data,
     get_macro_data, get_nikkei225_breadth,
     get_earnings_alert, fmt,
-    build_short_prompt, build_medium_prompt, build_long_prompt
+    build_short_prompt, build_medium_prompt, build_long_prompt,
+    normalize_priority, DEFAULT_PERIOD_DAYS
 )
 import math
 from fastapi.responses import JSONResponse
@@ -356,6 +357,10 @@ async def swing_analysis(request: Request):
         "analysis_style": body.get("analysis_style", "バランス型"),
     }
 
+    # 優先順位・期間の日数設定（プロフィール設定で変更可能）
+    priority    = normalize_priority(body.get("priority"), period)
+    period_days = body.get("period_days") or DEFAULT_PERIOD_DAYS
+
     sector_data = body.get("sector_data", {})
     jp_sectors  = sector_data.get("jp", [])
     us_sectors  = sector_data.get("us", [])
@@ -403,26 +408,30 @@ async def swing_analysis(request: Request):
     industry = fund.get("industry") or "不明"
 
     # 決算アラート判定
-    earnings_alert = get_earnings_alert(earnings_date_str, period)
+    earnings_alert = get_earnings_alert(earnings_date_str, period, period_days)
 
     # ── プロンプト選択 ──
     if period == "短期":
         prompt = build_short_prompt(
             name, code, tech, fund, macro, breadth,
             earnings_alert, news_summary, score, user_profile,
-            sector, industry
+            sector, industry,
+            priority=priority, period_days=period_days
         )
     elif period == "中期":
         prompt = build_medium_prompt(
             name, code, tech, fund, macro, breadth,
             earnings_alert, news_summary, score, user_profile,
-            sector, industry
+            sector, industry,
+            priority=priority, period_days=period_days
         )
     else:
         prompt = build_long_prompt(
             name, code, tech, fund, macro,
-            news_summary, score, user_profile,
-            sector, industry
+            breadth=breadth, earnings_alert=earnings_alert,
+            news_summary=news_summary, score=score, user_profile=user_profile,
+            sector=sector, industry=industry,
+            priority=priority, period_days=period_days
         )
 
     # ── AI呼び出し ──

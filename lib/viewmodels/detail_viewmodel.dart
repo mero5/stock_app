@@ -16,6 +16,8 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import '../services/stock_service.dart';
+import '../services/auth_service.dart';
+import '../services/user_profile_service.dart';
 
 class DetailViewModel extends ChangeNotifier {
   // ============================================================
@@ -64,6 +66,44 @@ class DetailViewModel extends ChangeNotifier {
 
   /// ニュース取得のプログレスバーの進捗（0.0〜1.0）
   double newsProgress = 0.0;
+
+  /// ユーザープロファイル（AI分析の優先順位・期間の日数設定等）
+  /// 未取得・未設定の場合はnull（デフォルト設定で動作する）
+  Map<String, dynamic>? userProfile;
+
+  // ============================================================
+  // ユーザープロファイル
+  // ============================================================
+
+  /// ユーザープロファイルを取得する
+  ///
+  /// AI分析の優先順位（priority_short/medium/long）・
+  /// 期間の日数設定（period_short_max_days/period_medium_max_days）に使用する。
+  /// 未ログイン・未設定の場合はnullのままとなり、バックエンド側のデフォルト値で動作する。
+  Future<void> loadUserProfile() async {
+    try {
+      final userId = await AuthService.getUserId();
+      if (userId == null) return;
+      userProfile = await UserProfileService.getProfile(userId);
+      notifyListeners();
+    } catch (e) {
+      debugPrint('プロファイル取得エラー: $e');
+    }
+  }
+
+  /// 分析期間の表示ラベルを返す（例：「14日以内」「15〜90日」「90日超」）
+  ///
+  /// プロファイルの期間日数設定を反映。未設定の場合は
+  /// デフォルト（短期14日・中期90日）を使う。
+  String periodLabel(String period) {
+    final shortMax =
+        (userProfile?['period_short_max_days'] as num?)?.toInt() ?? 14;
+    final mediumMax =
+        (userProfile?['period_medium_max_days'] as num?)?.toInt() ?? 90;
+    if (period == '短期') return '$shortMax日以内';
+    if (period == '中期') return '${shortMax + 1}〜$mediumMax日';
+    return '$mediumMax日超';
+  }
 
   // ============================================================
   // 銘柄詳細データの取得
@@ -171,6 +211,7 @@ class DetailViewModel extends ChangeNotifier {
         checks: analysisChecks,
         period: selectedPeriod,
         sectorData: sectorData,
+        userProfile: userProfile,
       );
 
       // タイマー停止・進捗を100%にして完了

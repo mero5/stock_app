@@ -348,10 +348,96 @@ def get_fundamental_data(ticker_code: str) -> dict:
         return {}
 
 
-def get_earnings_alert(earnings_date_str: str, period: str) -> dict:
+# ===================================================
+# 優先度設定（ユーザーが並び替え可能なAI分析の観点）
+# ===================================================
+
+# キー: (表示名, 説明)
+PRIORITY_ITEMS = {
+    "capital_flow":    ("資金流入・テーマ性", "市場のテーマ・資金がこの銘柄/セクターに向いているか"),
+    "sector_strength": ("セクター強度", "同業種内での相対的な強弱"),
+    "supply_demand":   ("需給", "信用倍率・空売り比率・騰落レシオ"),
+    "trend":           ("トレンド", "移動平均線・ADX・モメンタムなどのトレンド系指標"),
+    "technical":       ("テクニカル指標", "RSI・MACD・ボリンジャーバンド・ストキャスティクス等"),
+    "macro":           ("マクロ環境", "VIX・為替・金利・原油・金・指数トレンド"),
+    "fundamental":     ("ファンダメンタル", "PER・PBR・ROEなどの企業業績・財務指標"),
+    "earnings_alert":  ("決算アラート", "決算発表が近いかどうかの警戒度"),
+    "news":            ("ニュース・材料", "直近ニュースのセンチメント"),
+}
+
+# 期間別のデフォルト優先順位（ユーザー未設定時に使用）
+DEFAULT_PRIORITY = {
+    "短期": ["capital_flow", "sector_strength", "supply_demand", "trend",
+             "technical", "macro", "earnings_alert", "news", "fundamental"],
+    "中期": ["sector_strength", "capital_flow", "macro", "trend",
+             "fundamental", "supply_demand", "technical", "earnings_alert", "news"],
+    "長期": ["fundamental", "macro", "sector_strength", "technical",
+             "capital_flow", "trend", "news", "supply_demand", "earnings_alert"],
+}
+
+# 期間の日数境界のデフォルト（短期は◯日まで／中期は◯日まで。長期はそれ以上）
+DEFAULT_PERIOD_DAYS = {
+    "short_max":  14,
+    "medium_max": 90,
+}
+
+
+def normalize_priority(priority, period: str) -> list:
+    """
+    フロントから渡された優先順位リストを検証・補完する。
+    不正なキーは無視し、抜けている項目はデフォルト順で末尾に補う。
+    """
+    default = DEFAULT_PRIORITY.get(period, DEFAULT_PRIORITY["中期"])
+    if not priority or not isinstance(priority, list):
+        return list(default)
+    valid = [k for k in priority if k in PRIORITY_ITEMS]
+    for k in default:
+        if k not in valid:
+            valid.append(k)
+    return valid
+
+
+def build_priority_section(priority: list) -> str:
+    """優先順位リストから【優先順位】セクションのテキストを生成"""
+    lines = []
+    for i, key in enumerate(priority, start=1):
+        label, desc = PRIORITY_ITEMS.get(key, (key, ""))
+        suffix = "（最重要）" if i == 1 else ""
+        lines.append(f"{i}. {label}{suffix}：{desc}")
+    return "\n".join(lines)
+
+
+def resolve_period_days(period_days=None) -> dict:
+    """ユーザー設定の期間日数（未指定・不正値はデフォルトで補完）"""
+    days = dict(DEFAULT_PERIOD_DAYS)
+    if period_days:
+        for k in ("short_max", "medium_max"):
+            v = period_days.get(k)
+            if v:
+                try:
+                    days[k] = int(v)
+                except (TypeError, ValueError):
+                    pass
+    return days
+
+
+def get_period_label(period: str, period_days=None) -> str:
+    """期間設定から表示・プロンプト用のラベルを生成（例：「14日以内」）"""
+    days = resolve_period_days(period_days)
+    short_max, medium_max = days["short_max"], days["medium_max"]
+    if period == "短期":
+        return f"{short_max}日以内"
+    elif period == "中期":
+        return f"{short_max + 1}〜{medium_max}日"
+    else:
+        return f"{medium_max}日超"
+
+
+def get_earnings_alert(earnings_date_str: str, period: str, period_days=None) -> dict:
     """
     決算アラートレベルを判定
     period: "短期" / "中期" / "長期"
+    period_days: {"short_max": int, "medium_max": int}（ユーザー設定。未指定ならデフォルト）
     """
     if not earnings_date_str or earnings_date_str == "なし":
         return {
@@ -375,21 +461,20 @@ def get_earnings_alert(earnings_date_str: str, period: str) -> dict:
                 "message": None,
             }
 
-        # 期間別の閾値
+        # 期間別の閾値（ユーザーが設定した期間の日数に連動）
+        days = resolve_period_days(period_days)
+        short_max, medium_max = days["short_max"], days["medium_max"]
+
         if period == "短期":
-            danger_days  = 7
-            caution_days = 14
+            danger_days  = max(7, short_max // 2)
+            caution_days = short_max
         elif period == "中期":
-            danger_days  = 14
-            caution_days = 30
+            danger_days  = short_max
+            caution_days = medium_max
         else:
-            # 長期は決算アラート不要
-            return {
-                "exists":  False,
-                "date":    None,
-                "level":   "safe",
-                "message": None,
-            }
+            # 長期：中期の上限を基準に判定
+            danger_days  = medium_max
+            caution_days = medium_max * 2
 
         if days_to <= danger_days:
             level   = "danger"
@@ -430,10 +515,13 @@ def fmt(val, suffix="", null_str="データなし"):
 
 def build_short_prompt(name, code, tech, fund, macro, breadth,
                        earnings_alert, news_summary, score, user_profile,
-                       sector="不明", industry="不明") -> str:
+                       sector="不明", industry="不明",
+                       priority=None, period_days=None) -> str:
+    priority = normalize_priority(priority, "短期")
+    period_label = get_period_label("短期", period_days)
     return f"""
 あなたは日本株の短期スイングトレード専門アナリストです。
-以下のデータを元に{name}（{code}）が1〜2週間で「上昇・様子見・下落」のどれになるかを確率ベースで判断してください。
+以下のデータを元に{name}（{code}）が{period_label}で「上昇・様子見・下落」のどれになるかを確率ベースで判断してください。
 
 【前提】
 - すべての判断には具体的な数値を引用した理由を付ける（3文以上）
@@ -447,12 +535,8 @@ def build_short_prompt(name, code, tech, fund, macro, breadth,
 - セクター強度と資金流入を必ず評価する
 - 個別ではなく相対評価（強い/普通/弱い）で判断する
 
-【優先順位】
-1. セクター資金フロー（最重要）
-2. 地合い（指数・VIX）
-3. 短期トレンド（MA・出来高）
-4. テクニカル（RSI・MACD）
-5. ファンダメンタル（補助）
+【優先順位（ユーザー設定）】
+{build_priority_section(priority)}
 
 【推定ルール（データが無い場合）】
 - セクター強度：ニュース、指数トレンド、マクロ（原油・金利・為替）から推定し、必ず「strong/neutral/weak」で評価する
@@ -534,7 +618,7 @@ def build_short_prompt(name, code, tech, fund, macro, breadth,
 - 決算日：{fmt(earnings_alert.get('date'))}
 - 残り日数：{fmt(earnings_alert.get('days_to'), '日')}
 - アラートレベル：{earnings_alert.get('level', 'safe')}
-  ※danger=7日以内（急騰・急落リスク大）／caution=14日以内（注意）／safe=当面なし
+  ※danger=急騰・急落リスク大／caution=注意／safe=当面なし
   ※リスク許容度が低い場合はdanger・cautionで様子見を強く推奨
 
 【ニュース】
@@ -581,10 +665,13 @@ def build_short_prompt(name, code, tech, fund, macro, breadth,
 
 def build_medium_prompt(name, code, tech, fund, macro, breadth,
                         earnings_alert, news_summary, score, user_profile,
-                        sector="不明", industry="不明") -> str:
+                        sector="不明", industry="不明",
+                        priority=None, period_days=None) -> str:
+    priority = normalize_priority(priority, "中期")
+    period_label = get_period_label("中期", period_days)
     return f"""
-あなたは日本株の中期投資（1〜3ヶ月）専門アナリストです。
-以下のデータを元に{name}（{code}）が1〜3ヶ月で「上昇・様子見・下落」のどれになるかを確率ベースで判断してください。
+あなたは日本株の中期投資（{period_label}）専門アナリストです。
+以下のデータを元に{name}（{code}）が{period_label}で「上昇・様子見・下落」のどれになるかを確率ベースで判断してください。
 
 【前提】
 - 短期ノイズより中期トレンドを優先
@@ -598,13 +685,8 @@ def build_medium_prompt(name, code, tech, fund, macro, breadth,
 - セクター強度と資金流入を必ず評価する
 - 個別ではなく相対評価（強い/普通/弱い）で判断する
 
-【優先順位】
-1. セクター強度（最重要）
-2. 資金流入/流出（テーマ性）
-3. マクロ環境（為替・金利・原油）
-4. トレンド（MA25）
-5. ファンダメンタル（成長・割安）
-6. テクニカル（補助）
+【優先順位（ユーザー設定）】
+{build_priority_section(priority)}
 
 【推定ルール（データが無い場合）】
 - セクター強度：ニュース、指数トレンド、マクロ（原油・金利・為替）から推定し、必ず「strong/neutral/weak」で評価する
@@ -683,7 +765,7 @@ def build_medium_prompt(name, code, tech, fund, macro, breadth,
 - 決算日：{fmt(earnings_alert.get('date'))}
 - 残り日数：{fmt(earnings_alert.get('days_to'), '日')}
 - アラートレベル：{earnings_alert.get('level', 'safe')}
-  ※danger=14日以内／caution=1ヶ月以内／safe=当面なし
+  ※danger=急騰・急落リスク大／caution=注意／safe=当面なし
 
 【ニュース】
 {news_summary}
@@ -719,7 +801,7 @@ def build_medium_prompt(name, code, tech, fund, macro, breadth,
     "interest_rate_impact": {{ "value": "positive/negative/neutral", "reason": "金利差も含め3文で" }}
   }},
   "price_outlook": {{
-    "range": {{ "value": "3ヶ月の想定値幅（例：2200〜2800円）", "reason": "3〜4文で" }}
+    "range": {{ "value": "{period_label}の想定値幅（例：2200〜2800円）", "reason": "3〜4文で" }}
   }},
   "positive_points": ["上昇根拠1（指標名と数値を含め2文以上）", "上昇根拠2", "上昇根拠3"],
   "negative_points": ["下落リスク1（指標名と数値を含め2文以上）", "下落リスク2", "下落リスク3"],
@@ -728,11 +810,17 @@ def build_medium_prompt(name, code, tech, fund, macro, breadth,
 """.strip()
 
 
-def build_long_prompt(name, code, tech, fund, macro,
-                      news_summary, score, user_profile,
-                      sector="不明", industry="不明") -> str:
+def build_long_prompt(name, code, tech, fund, macro, breadth=None,
+                      earnings_alert=None, news_summary="", score=None, user_profile=None,
+                      sector="不明", industry="不明",
+                      priority=None, period_days=None) -> str:
+    priority = normalize_priority(priority, "長期")
+    period_label = get_period_label("長期", period_days)
+    breadth = breadth or {}
+    earnings_alert = earnings_alert or {}
+    user_profile = user_profile or {}
     return f"""
-あなたは日本株の長期投資（1年以上）専門アナリストです。
+あなたは日本株の長期投資（{period_label}）専門アナリストです。
 以下のデータを元に{name}（{code}）が長期で「上昇・様子見・下落」のどれになるかを確率ベースで判断してください。
 
 【前提】
@@ -747,13 +835,8 @@ def build_long_prompt(name, code, tech, fund, macro,
 - セクター強度と資金流入を必ず評価する
 - 個別ではなく相対評価（強い/普通/弱い）で判断する
 
-【優先順位】
-1. ファンダメンタル（最重要）
-2. 成長性（売上・ROE）
-3. マクロ環境（金利・為替）
-4. セクター構造（市場テーマ）
-5. バリュエーション（PER・PBR）
-6. テクニカル（参考程度）
+【優先順位（ユーザー設定）】
+{build_priority_section(priority)}
 
 【推定ルール（データが無い場合）】
 - セクター強度：ニュース、指数トレンド、マクロ（原油・金利・為替）から推定し、必ず「strong/neutral/weak」で評価する
@@ -799,6 +882,20 @@ def build_long_prompt(name, code, tech, fund, macro,
 - セクター：{sector}
 - 業種：{industry}
 
+【需給】
+- 信用倍率：{fmt(macro.get('margin_ratio'), '倍')}
+- 空売り比率：{fmt(macro.get('short_ratio'), '%')}
+
+【市場内部】
+- 騰落レシオ：{fmt(breadth.get('advance_decline_ratio'))}
+- 上昇銘柄数：{fmt(breadth.get('advancers'))} / 下落銘柄数：{fmt(breadth.get('decliners'))}
+
+【決算アラート】
+- 決算日：{fmt(earnings_alert.get('date'))}
+- 残り日数：{fmt(earnings_alert.get('days_to'), '日')}
+- アラートレベル：{earnings_alert.get('level', 'safe')}
+  ※長期保有でも決算をまたぐ場合は変動リスクとして言及すること
+
 【テクニカル（参考）】
 - 現在株価：{fmt(tech.get('price'), '円')}
 - MA75：{fmt(tech.get('ma75'), '円')}
@@ -835,6 +932,12 @@ def build_long_prompt(name, code, tech, fund, macro,
     "down":     {{ "value": 下落確率(整数0〜100), "reason": "3文以上で具体的に" }}
   }},
   "confidence": {{ "value": "high/medium/low", "reason": "2〜3文で" }},
+  "earnings_alert": {{
+    "exists":  {str(earnings_alert.get('exists', False)).lower()},
+    "date":    {json.dumps(earnings_alert.get('date'), ensure_ascii=False)},
+    "level":   "{earnings_alert.get('level', 'safe')}",
+    "message": {json.dumps(earnings_alert.get('message'), ensure_ascii=False)}
+  }},
   "fundamental_analysis": {{
     "growth":       {{ "value": "high/medium/low", "reason": "売上・EPS成長率から3文で" }},
     "profitability":{{ "value": "high/medium/low", "reason": "ROE・営業利益率から3文で" }},
@@ -845,6 +948,9 @@ def build_long_prompt(name, code, tech, fund, macro,
     "risk_mode":            {{ "value": "risk_on/risk_off/neutral", "reason": "3文で" }},
     "interest_rate_impact": {{ "value": "positive/negative/neutral", "reason": "金利差も含め3文で" }},
     "usd_jpy_impact":       {{ "value": "positive/negative/neutral", "reason": "2〜3文で" }}
+  }},
+  "supply_demand": {{
+    "bias": {{ "value": "bullish/bearish/neutral", "reason": "信用倍率・空売り比率から2〜3文で" }}
   }},
   "price_outlook": {{
     "target_trend": {{ "value": "uptrend/sideways/downtrend", "reason": "長期的な方向性を3〜4文で" }}

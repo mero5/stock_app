@@ -256,9 +256,11 @@ class StockService {
   /// [name]       銘柄名
   /// [detail]     詳細APIのレスポンス（PER・PBR等を含む）
   /// [lastCandle] 最新ローソク足データ（RSI・MACD等を含む）
-  /// [checks]     分析に使う指標の選択状態
-  /// [period]     分析期間（短期 / 中期 / 長期）
-  /// [sectorData] セクタートレンドデータ（AIの精度向上のため）
+  /// [checks]      分析に使う指標の選択状態
+  /// [period]      分析期間（短期 / 中期 / 長期）
+  /// [sectorData]  セクタートレンドデータ（AIの精度向上のため）
+  /// [userProfile] ユーザープロファイル（リスク許容度・分析スタイル・
+  ///               AI分析の優先順位・期間の日数設定等。未取得の場合はnull）
   static Future<Map<String, dynamic>> runSwingAnalysis({
     required String code,
     required String name,
@@ -267,7 +269,15 @@ class StockService {
     required Map<String, bool> checks,
     String period = '短期',
     Map<String, dynamic>? sectorData,
+    Map<String, dynamic>? userProfile,
   }) async {
+    // 期間に応じた優先順位キーを選択
+    final priorityKey = period == '短期'
+        ? 'priority_short'
+        : period == '中期'
+        ? 'priority_medium'
+        : 'priority_long';
+
     try {
       final res = await http.post(
         Uri.parse('${Constants.backendUrl}/stock/swing_analysis'),
@@ -291,6 +301,13 @@ class StockService {
           'news': detail['news'] ?? [],
           'checks': checks,
           'sector_data': sectorData ?? {},
+          'risk_level': userProfile?['risk_level'],
+          'analysis_style': userProfile?['analysis_style'],
+          'priority': userProfile?[priorityKey],
+          'period_days': {
+            'short_max': userProfile?['period_short_max_days'],
+            'medium_max': userProfile?['period_medium_max_days'],
+          },
         }),
       );
       debugPrint('=== AI診断レスポンス ===');

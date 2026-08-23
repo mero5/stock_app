@@ -27,6 +27,7 @@ class _DetailScreenState extends State<DetailScreen> {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       context.read<DetailViewModel>().loadDetail(widget.code);
+      context.read<DetailViewModel>().loadUserProfile();
     });
   }
 
@@ -987,11 +988,7 @@ class _DetailScreenState extends State<DetailScreen> {
                             ),
                           ),
                           Text(
-                            v == '短期'
-                                ? '1〜2週間'
-                                : v == '中期'
-                                ? '1〜3ヶ月'
-                                : '6ヶ月以上',
+                            vm.periodLabel(v),
                             style: TextStyle(
                               fontSize: 10,
                               color: selected ? Colors.white70 : Colors.grey,
@@ -1500,7 +1497,11 @@ class _DetailScreenState extends State<DetailScreen> {
                   _infoHeader(
                     '📋 総合サマリー',
                     '総合判定について',
-                    _getInfoText('verdict', selectedPeriod: vm.selectedPeriod),
+                    _getInfoText(
+                      'verdict',
+                      selectedPeriod: vm.selectedPeriod,
+                      periodLabel: vm.periodLabel(vm.selectedPeriod),
+                    ),
                   ),
                   const SizedBox(height: 8),
                   Text(
@@ -3102,15 +3103,22 @@ class _DetailScreenState extends State<DetailScreen> {
     );
   }
 
-  String _getInfoText(String key, {String selectedPeriod = '短期'}) {
+  String _getInfoText(
+    String key, {
+    String selectedPeriod = '短期',
+    String? periodLabel,
+  }) {
+    final resolvedPeriodLabel =
+        periodLabel ??
+        (selectedPeriod == '短期'
+            ? '1〜2週間'
+            : selectedPeriod == '中期'
+            ? '1〜3ヶ月'
+            : '6ヶ月以上');
     final texts = {
       'verdict':
           '''【何を表しているか】
-  AIが全データを総合的に分析した結果、今後${selectedPeriod == '短期'
-              ? '1〜2週間'
-              : selectedPeriod == '中期'
-              ? '1〜3ヶ月'
-              : '6ヶ月以上'}で株価が「上昇・様子見・下落」のどちらに動きやすいかを判定したものです。
+  AIが全データを総合的に分析した結果、今後$resolvedPeriodLabelで株価が「上昇・様子見・下落」のどちらに動きやすいかを判定したものです。
 
   【判定の根拠】
   テクニカル指標（RSI・MACD・ボリンジャーバンド・移動平均）、ファンダメンタル指標（PER・PBR・ROE）、マクロ環境（VIX・ドル円・米金利・原油・金）、最近のニュースを総合的に評価しています。
