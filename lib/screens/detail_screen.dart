@@ -7,6 +7,9 @@ import '../utils/formatter.dart';
 import '../widgets/signal_card.dart';
 import '../widgets/indicator_row.dart';
 import 'dart:async';
+import 'package:provider/provider.dart';
+import '../viewmodels/detail_viewmodel.dart';
+import '../theme/app_theme.dart';
 
 class DetailScreen extends StatefulWidget {
   final String code;
@@ -19,52 +22,19 @@ class DetailScreen extends StatefulWidget {
 }
 
 class _DetailScreenState extends State<DetailScreen> {
-  Map<String, dynamic>? detail;
-  bool isLoading = true;
-  String error = '';
-  String _selectedPeriod = '短期';
-  // AI分析（新スイング分析用）
-  final Map<String, bool> _analysisChecks = {
-    'technical': true,
-    'fundamental': true,
-    'macro': false,
-    'supply': false,
-    'news': false,
-  };
-  Map<String, dynamic>? _aiResult;
-  bool _isAnalyzing = false;
-  double _analysisProgress = 0.0;
-
-  // ニュースタブ用
-  List<Map<String, dynamic>> _newsItems = [];
-  bool _isLoadingNews = false;
-  double _newsProgress = 0.0;
-  // 判断タブのスコアを保持
-  int _currentScore = 0;
-
   @override
   void initState() {
     super.initState();
-    _loadDetail();
-  }
-
-  Future<void> _loadDetail() async {
-    try {
-      final data = await StockService.getDetail(widget.code);
-      setState(() {
-        detail = data;
-        isLoading = false;
-      });
-    } catch (e) {
-      setState(() {
-        error = e.toString();
-        isLoading = false;
-      });
-    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      context.read<DetailViewModel>().loadDetail(widget.code);
+    });
   }
 
   @override
   Widget build(BuildContext context) {
+    // ViewModelを監視
+    final vm = context.watch<DetailViewModel>();
+
     return Scaffold(
       appBar: AppBar(
         title: Text(widget.name),
@@ -72,30 +42,32 @@ class _DetailScreenState extends State<DetailScreen> {
         foregroundColor: Colors.black,
         elevation: 1,
       ),
-      body: isLoading
+      body: vm.isLoading
           ? const Center(child: CircularProgressIndicator())
-          : error.isNotEmpty
-          ? Center(child: Text("エラー: $error"))
-          : _buildBody(),
+          : vm.error.isNotEmpty
+          ? Center(child: Text('エラー: ${vm.error}'))
+          : _buildBody(vm),
     );
   }
 
-  Widget _buildBody() {
-    if (detail == null || detail!.containsKey('error')) {
+  Widget _buildBody(DetailViewModel vm) {
+    if (vm.detail == null || vm.detail!.containsKey('error')) {
       return const Center(child: Text("データを取得できませんでした"));
     }
 
     // 株価が取れない場合（市場休場など）もエラーにしない
-    final candles = List<Map<String, dynamic>>.from(detail!['candles'] ?? []);
+    final candles = List<Map<String, dynamic>>.from(
+      vm.detail!['candles'] ?? [],
+    );
 
     return DefaultTabController(
       length: 5,
       child: Column(
         children: [
           _buildPriceCard(
-            detail!['price'],
-            detail!['change'],
-            detail!['change_pct'],
+            vm.detail!['price'],
+            vm.detail!['change'],
+            vm.detail!['change_pct'],
           ),
           const TabBar(
             tabs: [
@@ -115,9 +87,9 @@ class _DetailScreenState extends State<DetailScreen> {
               children: [
                 _buildChartTab(candles),
                 _buildJudgeTab(candles),
-                _buildIndicatorTab(),
-                _buildAiTab(),
-                _buildNewsTab(),
+                _buildIndicatorTab(vm),
+                _buildAiTab(vm),
+                _buildNewsTab(vm),
               ],
             ),
           ),
@@ -691,15 +663,15 @@ class _DetailScreenState extends State<DetailScreen> {
     );
   }
 
-  Widget _buildIndicatorTab() {
-    final per = detail!['per'];
-    final pbr = detail!['pbr'];
-    final marketCap = detail!['market_cap'];
-    final divYield = detail!['dividend_yield'];
-    final roe = detail!['roe'];
-    final roa = detail!['roa'];
-    final revGrowth = detail!['revenue_growth'];
-    final debtEquity = detail!['debt_to_equity'];
+  Widget _buildIndicatorTab(DetailViewModel vm) {
+    final per = vm.detail!['per'];
+    final pbr = vm.detail!['pbr'];
+    final marketCap = vm.detail!['market_cap'];
+    final divYield = vm.detail!['dividend_yield'];
+    final roe = vm.detail!['roe'];
+    final roa = vm.detail!['roa'];
+    final revGrowth = vm.detail!['revenue_growth'];
+    final debtEquity = vm.detail!['debt_to_equity'];
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
@@ -926,7 +898,7 @@ class _DetailScreenState extends State<DetailScreen> {
           // 時価総額
           _fundaCard(
             label: '時価総額',
-            value: Formatter.marketCap(detail!['market_cap']),
+            value: Formatter.marketCap(vm.detail!['market_cap']),
             judge: null,
             infoTitle: '時価総額とは',
             infoContent: '''【時価総額とは】
@@ -971,8 +943,10 @@ class _DetailScreenState extends State<DetailScreen> {
     );
   }
 
-  Widget _buildAiTab() {
-    final candles = List<Map<String, dynamic>>.from(detail!['candles'] ?? []);
+  Widget _buildAiTab(DetailViewModel vm) {
+    final candles = List<Map<String, dynamic>>.from(
+      vm.detail!['candles'] ?? [],
+    );
     final lastCandle = candles.isNotEmpty ? candles.last : <String, dynamic>{};
 
     return SingleChildScrollView(
@@ -988,12 +962,12 @@ class _DetailScreenState extends State<DetailScreen> {
           const SizedBox(height: 8),
           Row(
             children: ['短期', '中期', '長期'].map((v) {
-              final selected = _selectedPeriod == v;
+              final selected = vm.selectedPeriod == v;
               return Expanded(
                 child: Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 4),
                   child: GestureDetector(
-                    onTap: () => setState(() => _selectedPeriod = v),
+                    onTap: () => context.read<DetailViewModel>().setPeriod(v),
                     child: Container(
                       padding: const EdgeInsets.symmetric(vertical: 10),
                       decoration: BoxDecoration(
@@ -1037,8 +1011,14 @@ class _DetailScreenState extends State<DetailScreen> {
           SizedBox(
             width: double.infinity,
             child: ElevatedButton.icon(
-              onPressed: _isAnalyzing ? null : () => _runAiAnalysis(lastCandle),
-              icon: _isAnalyzing
+              onPressed: vm.isAnalyzing
+                  ? null
+                  : () => context.read<DetailViewModel>().runAiAnalysis(
+                      code: widget.code,
+                      name: widget.name,
+                      lastCandle: lastCandle,
+                    ),
+              icon: vm.isAnalyzing
                   ? const SizedBox(
                       width: 16,
                       height: 16,
@@ -1048,7 +1028,7 @@ class _DetailScreenState extends State<DetailScreen> {
                       ),
                     )
                   : const Icon(Icons.auto_awesome),
-              label: Text(_isAnalyzing ? '分析中...' : 'AI分析を実行'),
+              label: Text(vm.isAnalyzing ? '分析中...' : 'AI分析を実行'),
               style: ElevatedButton.styleFrom(
                 backgroundColor: Colors.blue,
                 foregroundColor: Colors.white,
@@ -1061,30 +1041,30 @@ class _DetailScreenState extends State<DetailScreen> {
           ),
 
           // ── プログレスバー ──
-          if (_isAnalyzing) ...[
+          if (vm.isAnalyzing) ...[
             const SizedBox(height: 16),
-            _buildProgressBar(),
+            _buildProgressBar(vm),
           ],
 
           // ── 結果表示 ──
-          if (_aiResult != null && !_isAnalyzing) ...[
+          if (vm.aiResult != null && !vm.isAnalyzing) ...[
             const SizedBox(height: 20),
-            _buildAiResultCard(_aiResult!),
+            _buildAiResultCard(vm.aiResult!, vm),
           ],
         ],
       ),
     );
   }
 
-  Widget _buildNewsTab() {
-    if (_isLoadingNews) {
+  Widget _buildNewsTab(DetailViewModel vm) {
+    if (vm.isLoadingNews) {
       final steps = [
         'ニュースを取得中...',
         '記事を解析中...',
         'AIが日本語に翻訳中...',
         'ニュースを整理中...',
       ];
-      final stepIndex = (_newsProgress * steps.length).floor().clamp(
+      final stepIndex = (vm.newsProgress * steps.length).floor().clamp(
         0,
         steps.length - 1,
       );
@@ -1105,7 +1085,7 @@ class _DetailScreenState extends State<DetailScreen> {
               ClipRRect(
                 borderRadius: BorderRadius.circular(4),
                 child: LinearProgressIndicator(
-                  value: _newsProgress,
+                  value: vm.newsProgress,
                   minHeight: 8,
                   backgroundColor: Colors.grey.shade200,
                   valueColor: const AlwaysStoppedAnimation<Color>(Colors.blue),
@@ -1113,7 +1093,7 @@ class _DetailScreenState extends State<DetailScreen> {
               ),
               const SizedBox(height: 8),
               Text(
-                '${(_newsProgress * 100).toInt()}%',
+                '${(vm.newsProgress * 100).toInt()}%',
                 style: const TextStyle(fontSize: 12, color: Colors.grey),
               ),
             ],
@@ -1122,7 +1102,7 @@ class _DetailScreenState extends State<DetailScreen> {
       );
     }
 
-    if (_newsItems.isEmpty) {
+    if (vm.newsItems.isEmpty) {
       return Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -1135,7 +1115,8 @@ class _DetailScreenState extends State<DetailScreen> {
             ),
             const SizedBox(height: 8),
             ElevatedButton.icon(
-              onPressed: _loadNews,
+              onPressed: () =>
+                  context.read<DetailViewModel>().loadNews(widget.code),
               icon: const Icon(Icons.refresh),
               label: const Text('ニュースを取得する'),
             ),
@@ -1146,9 +1127,9 @@ class _DetailScreenState extends State<DetailScreen> {
 
     return ListView.builder(
       padding: const EdgeInsets.all(16),
-      itemCount: _newsItems.length,
+      itemCount: vm.newsItems.length,
       itemBuilder: (context, index) {
-        final n = _newsItems[index];
+        final n = vm.newsItems[index];
         final title = n['title'] as String? ?? '';
         final summary = n['summary'] as String? ?? '';
         final provider = n['provider'] as String? ?? '';
@@ -1276,49 +1257,7 @@ class _DetailScreenState extends State<DetailScreen> {
     );
   }
 
-  Future<void> _loadNews() async {
-    setState(() {
-      _isLoadingNews = true;
-      _newsProgress = 0.0;
-    });
-
-    // 疑似プログレス（APIが終わるまでゆっくり進む）
-    final progressTimer = Timer.periodic(const Duration(milliseconds: 300), (
-      timer,
-    ) {
-      if (!_isLoadingNews) {
-        timer.cancel();
-        return;
-      }
-      setState(() {
-        if (_newsProgress < 0.9) {
-          _newsProgress += 0.018; // 約5秒で85%
-        }
-      });
-    });
-
-    try {
-      final data = await StockService.getAiAnalysis(widget.code);
-      final news = data['news'] as List? ?? [];
-      progressTimer.cancel();
-      setState(() {
-        _newsProgress = 1.0;
-        _newsItems = news.map((n) => n as Map<String, dynamic>).toList();
-      });
-      await Future.delayed(const Duration(milliseconds: 300));
-    } catch (e) {
-      progressTimer.cancel();
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('ニュース取得エラー: $e')));
-      }
-    } finally {
-      if (mounted) setState(() => _isLoadingNews = false);
-    }
-  }
-
-  Widget _buildAiResultCard(Map<String, dynamic> r) {
+  Widget _buildAiResultCard(Map<String, dynamic> r, DetailViewModel vm) {
     if (r.containsKey('error')) {
       return Card(
         color: Colors.red.shade50,
@@ -1332,7 +1271,7 @@ class _DetailScreenState extends State<DetailScreen> {
       );
     }
 
-    final period = r['_period'] as String? ?? _selectedPeriod;
+    final period = r['_period'] as String? ?? vm.selectedPeriod;
     final verdict = r['verdict'] as Map? ?? {};
     final prob = r['probability'] as Map? ?? {};
     final conf = r['confidence'] as Map? ?? {};
@@ -1386,8 +1325,13 @@ class _DetailScreenState extends State<DetailScreen> {
                     ),
                     const SizedBox(width: 6),
                     GestureDetector(
-                      onTap: () =>
-                          _showInfoSheet('総合判定について', _getInfoText('verdict')),
+                      onTap: () => _showInfoSheet(
+                        '総合判定について',
+                        _getInfoText(
+                          'verdict',
+                          selectedPeriod: vm.selectedPeriod,
+                        ),
+                      ),
                       child: _infoIcon(),
                     ),
                   ],
@@ -1420,7 +1364,14 @@ class _DetailScreenState extends State<DetailScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _infoHeader('確率分布', '確率分布について', _getInfoText('probability')),
+                _infoHeader(
+                  '確率分布',
+                  '確率分布について',
+                  _getInfoText(
+                    'probability',
+                    selectedPeriod: vm.selectedPeriod,
+                  ),
+                ),
                 const SizedBox(height: 12),
                 _probBar('上昇', prob['up']?['value'] ?? 0, Colors.red),
                 if ((prob['up']?['reason'] ?? '').isNotEmpty)
@@ -1469,28 +1420,28 @@ class _DetailScreenState extends State<DetailScreen> {
 
         // ── 短期のみ：価格戦略 ──
         if (period == '短期') ...[
-          _buildPriceStrategyCard(r),
+          _buildPriceStrategyCard(r, vm),
           const SizedBox(height: 8),
         ],
 
         // ── 中期のみ：価格見通し・トレンド強度 ──
         if (period == '中期') ...[
-          _buildMidTermCards(r),
+          _buildMidTermCards(r, vm),
           const SizedBox(height: 8),
         ],
 
         // ── 長期のみ：ファンダ分析・バリュエーション ──
         if (period == '長期') ...[
-          _buildLongTermCards(r),
+          _buildLongTermCards(r, vm),
           const SizedBox(height: 8),
         ],
 
         // ── リスク・好材料（全期間共通） ──
-        _buildRiskOpportunityCards(r),
+        _buildRiskOpportunityCards(r, vm),
         const SizedBox(height: 8),
 
         // ── マクロ分析（全期間共通） ──
-        _buildMacroCard(r),
+        _buildMacroCard(r, vm),
         const SizedBox(height: 8),
 
         // ── 信頼度（全期間共通） ──
@@ -1505,7 +1456,14 @@ class _DetailScreenState extends State<DetailScreen> {
               children: [
                 Row(
                   children: [
-                    _infoHeader('信頼度', '信頼度について', _getInfoText('confidence')),
+                    _infoHeader(
+                      '信頼度',
+                      '信頼度について',
+                      _getInfoText(
+                        'confidence',
+                        selectedPeriod: vm.selectedPeriod,
+                      ),
+                    ),
                     const SizedBox(width: 8),
                     _confidenceBadge(conf['value'] as String? ?? 'low'),
                   ],
@@ -1539,7 +1497,11 @@ class _DetailScreenState extends State<DetailScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  _infoHeader('📋 総合サマリー', '総合判定について', _getInfoText('verdict')),
+                  _infoHeader(
+                    '📋 総合サマリー',
+                    '総合判定について',
+                    _getInfoText('verdict', selectedPeriod: vm.selectedPeriod),
+                  ),
                   const SizedBox(height: 8),
                   Text(
                     summary,
@@ -1575,7 +1537,7 @@ class _DetailScreenState extends State<DetailScreen> {
         // ── デバッグ：渡したデータ確認ボタン ──
         const SizedBox(height: 8),
         OutlinedButton.icon(
-          onPressed: () => _showPromptSheet(_aiResult!),
+          onPressed: () => _showPromptSheet(vm.aiResult!),
           icon: const Icon(Icons.code, size: 16),
           label: const Text('AIに渡したデータを確認', style: TextStyle(fontSize: 12)),
           style: OutlinedButton.styleFrom(
@@ -1773,7 +1735,7 @@ class _DetailScreenState extends State<DetailScreen> {
     );
   }
 
-  Widget _buildProgressBar() {
+  Widget _buildProgressBar(DetailViewModel vm) {
     final steps = [
       '株価データを取得中...',
       'テクニカル指標を計算中...',
@@ -1781,7 +1743,7 @@ class _DetailScreenState extends State<DetailScreen> {
       'AIが総合判断を生成中...',
       '結果を整理中...',
     ];
-    final stepIndex = (_analysisProgress * steps.length).floor().clamp(
+    final stepIndex = (vm.analysisProgress * steps.length).floor().clamp(
       0,
       steps.length - 1,
     );
@@ -1797,7 +1759,7 @@ class _DetailScreenState extends State<DetailScreen> {
         ClipRRect(
           borderRadius: BorderRadius.circular(4),
           child: LinearProgressIndicator(
-            value: _analysisProgress,
+            value: vm.analysisProgress,
             minHeight: 8,
             backgroundColor: Colors.grey.shade200,
             valueColor: const AlwaysStoppedAnimation<Color>(Colors.blue),
@@ -1805,63 +1767,11 @@ class _DetailScreenState extends State<DetailScreen> {
         ),
         const SizedBox(height: 4),
         Text(
-          '${(_analysisProgress * 100).toInt()}%',
+          '${(vm.analysisProgress * 100).toInt()}%',
           style: const TextStyle(fontSize: 11, color: Colors.grey),
         ),
       ],
     );
-  }
-
-  Future<void> _runAiAnalysis(Map<String, dynamic> lastCandle) async {
-    setState(() {
-      _isAnalyzing = true;
-      _aiResult = null;
-      _analysisProgress = 0.0;
-    });
-
-    // ① 先にセクターデータを取得
-    final sectorData = await StockService.getSectorTrends();
-
-    final progressTimer = Timer.periodic(const Duration(milliseconds: 450), (
-      timer,
-    ) {
-      if (!_isAnalyzing) {
-        timer.cancel();
-        return;
-      }
-      setState(() {
-        if (_analysisProgress < 0.9) {
-          _analysisProgress += 0.03;
-        }
-      });
-    });
-
-    try {
-      final result = await StockService.runSwingAnalysis(
-        code: widget.code,
-        name: widget.name,
-        detail: detail!,
-        lastCandle: lastCandle,
-        checks: _analysisChecks,
-        period: _selectedPeriod,
-        sectorData: sectorData, // ② 取得したデータを渡す
-      );
-      progressTimer.cancel();
-      setState(() {
-        _analysisProgress = 1.0;
-        _aiResult = result;
-      });
-      await Future.delayed(const Duration(milliseconds: 300));
-    } catch (e) {
-      progressTimer.cancel();
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('AI分析エラー: $e')));
-      }
-    } finally {
-      setState(() => _isAnalyzing = false);
-    }
   }
 
   Widget _buildCandleChart(List<Map<String, dynamic>> candles) {
@@ -2212,7 +2122,7 @@ class _DetailScreenState extends State<DetailScreen> {
   }
 
   // 短期：価格戦略カード
-  Widget _buildPriceStrategyCard(Map<String, dynamic> r) {
+  Widget _buildPriceStrategyCard(Map<String, dynamic> r, DetailViewModel vm) {
     final price = r['price_strategy'] as Map? ?? {};
     if (price.isEmpty) return const SizedBox();
     return Card(
@@ -2222,7 +2132,11 @@ class _DetailScreenState extends State<DetailScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _infoHeader('💹 価格戦略', '価格戦略について', _getInfoText('price_strategy')),
+            _infoHeader(
+              '💹 価格戦略',
+              '価格戦略について',
+              _getInfoText('price_strategy', selectedPeriod: vm.selectedPeriod),
+            ),
             const SizedBox(height: 10),
             _priceRow(
               'エントリー',
@@ -2251,7 +2165,7 @@ class _DetailScreenState extends State<DetailScreen> {
   }
 
   // 中期：価格見通し＋トレンド強度カード
-  Widget _buildMidTermCards(Map<String, dynamic> r) {
+  Widget _buildMidTermCards(Map<String, dynamic> r, DetailViewModel vm) {
     final trend = r['trend_analysis'] as Map? ?? {};
     final outlook = r['price_outlook'] as Map? ?? {};
     return Column(
@@ -2269,7 +2183,10 @@ class _DetailScreenState extends State<DetailScreen> {
                   _infoHeader(
                     '📊 トレンド強度',
                     'トレンド強度について',
-                    _getInfoText('trend_strength'),
+                    _getInfoText(
+                      'trend_strength',
+                      selectedPeriod: vm.selectedPeriod,
+                    ),
                   ),
                   const SizedBox(height: 8),
                   _macroRow('強度', trend['strength']),
@@ -2291,7 +2208,10 @@ class _DetailScreenState extends State<DetailScreen> {
                   _infoHeader(
                     '💹 価格見通し（1〜3ヶ月）',
                     '価格見通しについて',
-                    _getInfoText('price_outlook_mid'),
+                    _getInfoText(
+                      'price_outlook_mid',
+                      selectedPeriod: vm.selectedPeriod,
+                    ),
                   ),
                   const SizedBox(height: 8),
                   _macroRow('想定値幅', outlook['range']),
@@ -2300,13 +2220,13 @@ class _DetailScreenState extends State<DetailScreen> {
             ),
           ),
         const SizedBox(height: 8),
-        _buildFundaCard(r),
+        _buildFundaCard(r, vm),
       ],
     );
   }
 
   // 長期：ファンダ分析＋バリュエーション
-  Widget _buildLongTermCards(Map<String, dynamic> r) {
+  Widget _buildLongTermCards(Map<String, dynamic> r, DetailViewModel vm) {
     final funda = r['fundamental_analysis'] as Map? ?? {};
     final val = r['valuation_analysis'] as Map? ?? {};
     final ltRisk = r['long_term_risk'] as Map? ?? {};
@@ -2326,7 +2246,10 @@ class _DetailScreenState extends State<DetailScreen> {
                   _infoHeader(
                     '📈 ファンダメンタル分析',
                     'ファンダメンタル分析について',
-                    _getInfoText('funda_long'),
+                    _getInfoText(
+                      'funda_long',
+                      selectedPeriod: vm.selectedPeriod,
+                    ),
                   ),
                   const SizedBox(height: 10),
                   _macroRow('成長性', funda['growth']),
@@ -2352,7 +2275,10 @@ class _DetailScreenState extends State<DetailScreen> {
                   _infoHeader(
                     '💰 バリュエーション',
                     'バリュエーションについて',
-                    _getInfoText('valuation_long'),
+                    _getInfoText(
+                      'valuation_long',
+                      selectedPeriod: vm.selectedPeriod,
+                    ),
                   ),
                   const SizedBox(height: 8),
                   _macroRow('評価水準', val['level']),
@@ -2395,7 +2321,10 @@ class _DetailScreenState extends State<DetailScreen> {
                   _infoHeader(
                     '🎯 長期価格トレンド',
                     '長期価格トレンドについて',
-                    _getInfoText('price_trend_long'),
+                    _getInfoText(
+                      'price_trend_long',
+                      selectedPeriod: vm.selectedPeriod,
+                    ),
                   ),
                   const SizedBox(height: 8),
                   _macroRow('方向性', outlook['target_trend']),
@@ -2408,7 +2337,7 @@ class _DetailScreenState extends State<DetailScreen> {
   }
 
   // 中期：ファンダカード
-  Widget _buildFundaCard(Map<String, dynamic> r) {
+  Widget _buildFundaCard(Map<String, dynamic> r, DetailViewModel vm) {
     final funda = r['fundamental_analysis'] as Map? ?? {};
     if (funda.isEmpty) return const SizedBox();
     return Card(
@@ -2421,7 +2350,7 @@ class _DetailScreenState extends State<DetailScreen> {
             _infoHeader(
               '📈 ファンダメンタル',
               'ファンダメンタル分析について',
-              _getInfoText('funda_mid'),
+              _getInfoText('funda_mid', selectedPeriod: vm.selectedPeriod),
             ),
             const SizedBox(height: 10),
             _macroRow('成長性', funda['growth']),
@@ -2436,7 +2365,10 @@ class _DetailScreenState extends State<DetailScreen> {
   }
 
   // リスク・好材料カード（全期間共通）
-  Widget _buildRiskOpportunityCards(Map<String, dynamic> r) {
+  Widget _buildRiskOpportunityCards(
+    Map<String, dynamic> r,
+    DetailViewModel vm,
+  ) {
     return Column(
       // ← Rowを Columnに変更
       children: [
@@ -2452,7 +2384,10 @@ class _DetailScreenState extends State<DetailScreen> {
                 _infoHeader(
                   '⚠️ リスク要因',
                   'リスク要因・好材料について',
-                  _getInfoText('risk_factors'),
+                  _getInfoText(
+                    'risk_factors',
+                    selectedPeriod: vm.selectedPeriod,
+                  ),
                 ),
                 const SizedBox(height: 8),
                 ...(r['negative_points'] as List? ??
@@ -2498,7 +2433,10 @@ class _DetailScreenState extends State<DetailScreen> {
                 _infoHeader(
                   '✨ 好材料',
                   'リスク要因・好材料について',
-                  _getInfoText('risk_factors'),
+                  _getInfoText(
+                    'opportunity_factors',
+                    selectedPeriod: vm.selectedPeriod,
+                  ),
                 ),
                 const SizedBox(height: 8),
                 ...(r['positive_points'] as List? ??
@@ -2539,7 +2477,7 @@ class _DetailScreenState extends State<DetailScreen> {
   }
 
   // マクロ分析カード（全期間共通）
-  Widget _buildMacroCard(Map<String, dynamic> r) {
+  Widget _buildMacroCard(Map<String, dynamic> r, DetailViewModel vm) {
     final macro = r['macro_analysis'] as Map? ?? {};
     if (macro.isEmpty) return const SizedBox();
     return Card(
@@ -2549,7 +2487,11 @@ class _DetailScreenState extends State<DetailScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _infoHeader('🌍 マクロ分析', 'マクロ分析について', _getInfoText('macro')),
+            _infoHeader(
+              '🌍 マクロ分析',
+              'マクロ分析について',
+              _getInfoText('macro', selectedPeriod: vm.selectedPeriod),
+            ),
             const SizedBox(height: 10),
             _macroRow('リスクモード', macro['risk_mode']),
             const Divider(height: 12),
@@ -3160,13 +3102,13 @@ class _DetailScreenState extends State<DetailScreen> {
     );
   }
 
-  String _getInfoText(String key) {
+  String _getInfoText(String key, {String selectedPeriod = '短期'}) {
     final texts = {
       'verdict':
           '''【何を表しているか】
-  AIが全データを総合的に分析した結果、今後${_selectedPeriod == '短期'
+  AIが全データを総合的に分析した結果、今後${selectedPeriod == '短期'
               ? '1〜2週間'
-              : _selectedPeriod == '中期'
+              : selectedPeriod == '中期'
               ? '1〜3ヶ月'
               : '6ヶ月以上'}で株価が「上昇・様子見・下落」のどちらに動きやすいかを判定したものです。
 

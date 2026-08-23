@@ -1,58 +1,106 @@
+// ============================================================
+// main.dart
+// アプリのエントリーポイント。
+//
+// ProviderはViewModelをWidget全体で共有するための仕組み。
+// MultiProviderで複数のViewModelを一括登録することで、
+// どの画面からでもViewModelにアクセスできる。
+// ============================================================
+
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:amplify_flutter/amplify_flutter.dart';
+import 'package:amplify_auth_cognito/amplify_auth_cognito.dart';
+import 'amplifyconfiguration.dart';
 import 'screens/login_screen.dart';
 import 'screens/home_screen.dart';
-import 'services/auth_service.dart';
+import 'viewmodels/home_viewmodel.dart';
+import 'viewmodels/portfolio_viewmodel.dart';
+import '../theme/app_theme.dart';
 
-void main() {
-  runApp(const StockApp());
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await _configureAmplify();
+  runApp(const MyApp());
 }
 
-class StockApp extends StatelessWidget {
-  const StockApp({super.key});
+/// Amplify（AWS Cognito認証）の初期化
+Future<void> _configureAmplify() async {
+  try {
+    final authPlugin = AmplifyAuthCognito();
+    await Amplify.addPlugin(authPlugin);
+    await Amplify.configure(amplifyconfig);
+  } catch (e) {
+    debugPrint('Amplify設定エラー: $e');
+  }
+}
+
+class MyApp extends StatelessWidget {
+  const MyApp({super.key});
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      home: const SplashScreen(),
-      theme: ThemeData(
-        bottomNavigationBarTheme: const BottomNavigationBarThemeData(
-          selectedItemColor: Colors.blue,
-          unselectedItemColor: Colors.grey,
-          backgroundColor: Colors.white,
-          type: BottomNavigationBarType.fixed,
-        ),
+    return MultiProvider(
+      providers: [
+        // ホーム画面のViewModel
+        // HomeScreenとその子Widgetからアクセス可能
+        ChangeNotifierProvider(create: (_) => HomeViewModel()),
+
+        // ポートフォリオ診断画面のViewModel
+        ChangeNotifierProvider(create: (_) => PortfolioViewModel()),
+      ],
+      child: MaterialApp(
+        title: '株アプリ',
+        theme: AppTheme.themeData,
+        home: const AuthWrapper(),
       ),
     );
   }
 }
 
-class SplashScreen extends StatefulWidget {
-  const SplashScreen({super.key});
+/// ログイン状態に応じて表示画面を切り替えるWidget
+/// ログイン済み → HomeScreen
+/// 未ログイン   → LoginScreen
+class AuthWrapper extends StatefulWidget {
+  const AuthWrapper({super.key});
 
   @override
-  State<SplashScreen> createState() => _SplashScreenState();
+  State<AuthWrapper> createState() => _AuthWrapperState();
 }
 
-class _SplashScreenState extends State<SplashScreen> {
+class _AuthWrapperState extends State<AuthWrapper> {
+  bool _isLoggedIn = false;
+  bool _isChecking = true;
+
   @override
   void initState() {
     super.initState();
-    _init();
+    _checkAuthStatus();
   }
 
-  Future<void> _init() async {
-    await AuthService.configure();
-    final signedIn = await AuthService.isSignedIn();
-    Navigator.pushReplacement(
-      context,
-      MaterialPageRoute(
-        builder: (_) => signedIn ? const HomeScreen() : const LoginScreen(),
-      ),
-    );
+  /// Cognitoのセッションを確認してログイン状態を判定する
+  Future<void> _checkAuthStatus() async {
+    try {
+      final result = await Amplify.Auth.fetchAuthSession();
+      setState(() {
+        _isLoggedIn = result.isSignedIn;
+        _isChecking = false;
+      });
+    } catch (e) {
+      setState(() {
+        _isLoggedIn = false;
+        _isChecking = false;
+      });
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    // 確認中はローディング表示
+    if (_isChecking) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
+
+    return _isLoggedIn ? const HomeScreen() : const LoginScreen();
   }
 }

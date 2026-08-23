@@ -11,6 +11,10 @@ from dotenv import load_dotenv
 from openai import OpenAI
 import google.generativeai as genai
 from googleapiclient.discovery import build
+import math
+from fastapi.responses import JSONResponse
+import json
+from fastapi.responses import JSONResponse
 
 # ===================================================
 # APIキー設定
@@ -33,6 +37,44 @@ gemini_model = genai.GenerativeModel("gemini-2.5-flash")
 # FastAPIアプリ初期化
 # ===================================================
 app = FastAPI()
+
+import math
+from fastapi.encoders import jsonable_encoder
+from fastapi import FastAPI
+import json
+
+# FastAPIのデフォルトJSONエンコーダーをオーバーライド
+class NanSafeEncoder(json.JSONEncoder):
+    def default(self, obj):
+        return None
+    
+    def encode(self, obj):
+        def fix_nan(o):
+            if isinstance(o, float) and (math.isnan(o) or math.isinf(o)):
+                return None
+            if isinstance(o, dict):
+                return {k: fix_nan(v) for k, v in o.items()}
+            if isinstance(o, list):
+                return [fix_nan(v) for v in o]
+            return o
+        return super().encode(fix_nan(obj))
+
+# uvicornのJSONレスポンスを上書き
+import starlette.responses as _sr
+_original_render = _sr.JSONResponse.render
+
+def _safe_render(self, content):
+    def fix_nan(o):
+        if isinstance(o, float) and (math.isnan(o) or math.isinf(o)):
+            return None
+        if isinstance(o, dict):
+            return {k: fix_nan(v) for k, v in o.items()}
+        if isinstance(o, list):
+            return [fix_nan(v) for v in o]
+        return o
+    return json.dumps(fix_nan(content), ensure_ascii=False).encode('utf-8')
+
+_sr.JSONResponse.render = _safe_render
 
 # CORS設定（Flutterからのアクセスを許可）
 app.add_middleware(
@@ -108,3 +150,25 @@ def health_check():
     except:
         results["jquants"] = "error"
     return results
+
+
+def sanitize_for_json(obj):
+    if isinstance(obj, dict):
+        return {k: sanitize_for_json(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [sanitize_for_json(v) for v in obj]
+    elif isinstance(obj, float) and (math.isnan(obj) or math.isinf(obj)):
+        return None
+    return obj
+
+
+
+
+class NanSafeJSONResponse(JSONResponse):
+    def render(self, content) -> bytes:
+        return json.dumps(
+            sanitize_for_json(content),
+            ensure_ascii=False,
+        ).encode("utf-8")
+
+app.router.default_response_class = NanSafeJSONResponse

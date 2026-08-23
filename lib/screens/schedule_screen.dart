@@ -1,11 +1,33 @@
+// ============================================================
+// ScheduleScreen
+// 株式市場のイベントカレンダーを表示する画面。
+//
+// 表示する情報：
+// ・カレンダー（月表示）
+//   - 日経平均の日次騰落（赤=上昇・緑=下落・色の濃さで変動幅を表現）
+//   - マーケットイベント（FOMC・日銀・SQ・祝日等）のドット
+//   - ウォッチリスト銘柄の決算・配当落ち日のドット
+// ・イベント一覧（月内の全イベントを日付順）
+//
+// データソース：
+// ・マーケットイベント → バックエンド（/market/events）
+// ・日経平均月次データ → バックエンド（/nikkei/monthly）
+// ・銘柄イベント      → バックエンド（/stock/events）
+// ・ウォッチリスト銘柄 → DynamoDB（WatchlistService）
+// ============================================================
+
 import 'package:flutter/material.dart';
 import '../services/stock_service.dart';
 import '../services/watchlist_service.dart';
 import '../widgets/api_error_banner.dart';
 
 class ScheduleScreen extends StatefulWidget {
+  /// APIが正常に使えるかどうかのフラグ
   final bool apiAvailable;
+
+  /// APIエラー時のメッセージ
   final String apiErrorMsg;
+
   const ScheduleScreen({
     super.key,
     this.apiAvailable = true,
@@ -17,11 +39,29 @@ class ScheduleScreen extends StatefulWidget {
 }
 
 class _ScheduleScreenState extends State<ScheduleScreen> {
+  // ============================================================
+  // 状態変数
+  // ============================================================
+
+  /// 現在表示中の年月
   DateTime _focusedMonth = DateTime.now();
+
+  /// ウォッチリスト銘柄の決算・配当落ち日イベント
   List<Map<String, dynamic>> _stockEvents = [];
+
+  /// マーケットイベント（FOMC・日銀・SQ・祝日等）
   List<Map<String, dynamic>> _marketEvents = [];
+
+  /// データ取得中フラグ
   bool _isLoading = false;
+
+  /// 日経平均の月次騰落データ
+  /// key: 「YYYY-MM-DD」形式の日付、value: {close・change・change_pct}
   Map<String, dynamic> _nikkeiData = {};
+
+  // ============================================================
+  // ライフサイクル
+  // ============================================================
 
   @override
   void initState() {
@@ -29,37 +69,67 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     _loadAllEvents();
   }
 
+  // ============================================================
+  // データ取得
+  // ============================================================
+
+  /// 表示中の月のイベントデータを全て並行取得する
+  ///
+  /// 取得するデータ：
+  /// 1. マーケットイベント（FOMC・SQ・祝日等）
+  /// 2. 日経平均月次データ
+  /// 3. ウォッチリスト銘柄のイベント（決算・配当落ち日）
+  ///
+  /// Future.waitで並行取得してパフォーマンスを最適化している。
   Future<void> _loadAllEvents() async {
     setState(() => _isLoading = true);
+
     try {
       final year = _focusedMonth.year;
       final month = _focusedMonth.month;
+
+      // ウォッチリストの銘柄コード一覧を取得
       final codes = await WatchlistService.getCodes();
 
+      // 並行取得するFutureのリスト
       final futures = <Future>[
-        StockService.getMarketEvents(year, month),
-        StockService.getNikkeiMonthly(year, month), // ← 追加
-        if (codes.isNotEmpty) StockService.getStockEvents(codes),
+        StockService.getMarketEvents(year, month), // マーケットイベント
+        StockService.getNikkeiMonthly(year, month), // 日経平均月次データ
+        if (codes.isNotEmpty) StockService.getStockEvents(codes), // 銘柄イベント
       ];
+
       final results = await Future.wait(futures);
 
       setState(() {
         _marketEvents = results[0] as List<Map<String, dynamic>>;
-        _nikkeiData = results[1] as Map<String, dynamic>; // ← 追加
+        _nikkeiData = results[1] as Map<String, dynamic>;
+        // ウォッチリストが空の場合は銘柄イベントを取得していないため空リスト
         _stockEvents = codes.isNotEmpty
             ? results[2] as List<Map<String, dynamic>>
             : [];
       });
     } catch (e) {
-      print('スケジュール取得エラー: $e');
+      debugPrint('スケジュール取得エラー: $e');
     } finally {
       setState(() => _isLoading = false);
     }
   }
 
-  String _fmt(DateTime dt) =>
-      '${dt.year}-${dt.month.toString().padLeft(2, '0')}-${dt.day.toString().padLeft(2, '0')}';
+  // ============================================================
+  // ユーティリティ
+  // ============================================================
 
+  /// DateTimeを「YYYY-MM-DD」形式の文字列に変換する
+  ///
+  /// イベントデータのdate文字列との比較に使用する。
+  String _fmt(DateTime dt) =>
+      '${dt.year}-${dt.month.toString().padLeft(2, '0')}-'
+      '${dt.day.toString().padLeft(2, '0')}';
+
+  /// イベントカラー名をColorに変換する
+  ///
+  /// バックエンドからは文字列でカラー名が返ってくるため
+  /// このマップで対応するFlutterのColorに変換する。
   Color _eventColor(String colorName) {
     const map = {
       'red': Colors.red,
@@ -79,6 +149,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     return map[colorName] ?? Colors.grey;
   }
 
+  /// 指定日のイベント一覧を返す（マーケット＋銘柄）
   List<Map<String, dynamic>> _eventsForDay(DateTime day) {
     final dateStr = _fmt(day);
     final market = _marketEvents.where((e) => e['date'] == dateStr).toList();
@@ -86,20 +157,33 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     return [...market, ...stock];
   }
 
+  /// 表示中の月の全イベントを日付順にグループ化して返す
+  ///
+  /// カレンダー下部のイベント一覧表示に使用する。
   List<MapEntry<String, List<Map<String, dynamic>>>> _allEventsThisMonth() {
     final prefix =
         '${_focusedMonth.year}-'
         '${_focusedMonth.month.toString().padLeft(2, '0')}';
+
+    // 当月の銘柄イベントだけ抽出
     final stock = _stockEvents
         .where((e) => (e['date'] as String).startsWith(prefix))
         .toList();
+
+    // マーケットイベントと銘柄イベントをマージして日付でグループ化
     final all = [..._marketEvents, ...stock];
     final Map<String, List<Map<String, dynamic>>> grouped = {};
     for (final e in all) {
       grouped.putIfAbsent(e['date'] as String, () => []).add(e);
     }
+
+    // 日付順にソート
     return grouped.entries.toList()..sort((a, b) => a.key.compareTo(b.key));
   }
+
+  // ============================================================
+  // build
+  // ============================================================
 
   @override
   Widget build(BuildContext context) {
@@ -115,7 +199,9 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
       ),
       body: Column(
         children: [
+          // APIエラーバナー（エラーの時だけ表示）
           if (!widget.apiAvailable) ApiErrorBanner(message: widget.apiErrorMsg),
+
           Expanded(
             child: _isLoading
                 ? const Center(child: CircularProgressIndicator())
@@ -134,16 +220,24 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     );
   }
 
+  // ============================================================
+  // カレンダーUI
+  // ============================================================
+
+  /// カレンダー全体を構築する
+  ///
+  /// 月ナビゲーション・曜日ヘッダー・日付グリッド・凡例を含む。
   Widget _buildCalendar() {
     final year = _focusedMonth.year;
     final month = _focusedMonth.month;
     final firstDay = DateTime(year, month, 1);
     final daysInMonth = DateTime(year, month + 1, 0).day;
+    // 月の最初の日が何曜日か（日曜=0に変換）
     final startWeekday = firstDay.weekday % 7;
 
     return Column(
       children: [
-        // 月ナビゲーション
+        // 月ナビゲーション（＜ 2024年4月 ＞）
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
           child: Row(
@@ -174,11 +268,12 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
           ),
         ),
 
-        // 曜日ヘッダー
+        // 曜日ヘッダー（日〜土）
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 8),
           child: Row(
             children: ['日', '月', '火', '水', '木', '金', '土'].map((w) {
+              // 日曜=赤・土曜=青・平日=黒
               Color c = Colors.black87;
               if (w == '日') c = Colors.red;
               if (w == '土') c = Colors.blue;
@@ -199,7 +294,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
         ),
         const SizedBox(height: 4),
 
-        // カレンダーグリッド
+        // カレンダーグリッド（7列×N行）
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 4),
           child: GridView.builder(
@@ -211,7 +306,9 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
             ),
             itemCount: startWeekday + daysInMonth,
             itemBuilder: (context, index) {
+              // 月初より前のセルは空白
               if (index < startWeekday) return const SizedBox();
+
               final day = index - startWeekday + 1;
               final date = DateTime(year, month, day);
               final events = _eventsForDay(date);
@@ -222,12 +319,14 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                   date.day == now.day;
 
               return GestureDetector(
+                // イベントがある日はタップで詳細モーダルを表示
                 onTap: events.isNotEmpty
                     ? () => _showDayEvents(date, events)
                     : null,
                 child: Container(
                   margin: const EdgeInsets.all(1),
                   decoration: BoxDecoration(
+                    // 今日はブルーの背景＋枠線
                     color: isToday ? Colors.blue.withOpacity(0.15) : null,
                     borderRadius: BorderRadius.circular(6),
                     border: isToday
@@ -238,6 +337,8 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                     mainAxisAlignment: MainAxisAlignment.start,
                     children: [
                       const SizedBox(height: 2),
+
+                      // 日付数字
                       Text(
                         '$day',
                         style: TextStyle(
@@ -245,6 +346,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                           fontWeight: isToday
                               ? FontWeight.bold
                               : FontWeight.normal,
+                          // 日曜=赤・土曜=青・平日=黒
                           color: date.weekday == DateTime.sunday
                               ? Colors.red
                               : date.weekday == DateTime.saturday
@@ -253,44 +355,11 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                         ),
                       ),
 
-                      // ★ 日経平均騰落表示 ★
-                      Builder(
-                        builder: (context) {
-                          final nk = _nikkeiData[_fmt(date)];
-                          if (nk == null) return const SizedBox();
-                          final change = (nk['change'] as num).toDouble();
-                          final changePct = (nk['change_pct'] as num)
-                              .toDouble();
-                          final intensity = (changePct.abs() / 3.0).clamp(
-                            0.2,
-                            1.0,
-                          );
-                          final color = change >= 0
-                              ? Colors.red.withOpacity(intensity)
-                              : Colors.green.withOpacity(intensity);
-                          final sign = change >= 0 ? '+' : '';
-                          return Container(
-                            width: double.infinity, // ← 追加（横いっぱいに）
-                            margin: const EdgeInsets.only(top: 1),
-                            padding: const EdgeInsets.symmetric(vertical: 1),
-                            decoration: BoxDecoration(
-                              color: color.withOpacity(0.2), // ← 少し濃く
-                              borderRadius: BorderRadius.circular(2),
-                            ),
-                            child: Text(
-                              '$sign${changePct.toStringAsFixed(1)}%',
-                              style: TextStyle(
-                                fontSize: 9, // ← 7から9に
-                                color: color,
-                                fontWeight: FontWeight.bold,
-                              ),
-                              textAlign: TextAlign.center,
-                            ),
-                          );
-                        },
-                      ),
+                      // 日経平均の騰落表示
+                      // 赤=上昇・緑=下落、色の濃さで変動幅を表現
+                      _buildNikkeiCell(date),
 
-                      // イベントドット（最大3個）
+                      // イベントドット（最大3個＋超過数）
                       Wrap(
                         spacing: 1,
                         children: events.take(3).map((e) {
@@ -321,13 +390,58 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
           ),
         ),
         const SizedBox(height: 8),
+
+        // 凡例
         _buildLegend(),
         const SizedBox(height: 8),
       ],
     );
   }
 
+  /// カレンダーセル内の日経平均騰落を表示するWidgetを構築する
+  ///
+  /// データがない日（休場日等）は空のSizedBoxを返す。
+  /// 変動率が大きいほど色が濃くなる（最大±3%を基準）。
+  Widget _buildNikkeiCell(DateTime date) {
+    final nk = _nikkeiData[_fmt(date)];
+    if (nk == null) return const SizedBox();
+
+    final change = (nk['change'] as num).toDouble();
+    final changePct = (nk['change_pct'] as num).toDouble();
+
+    // 変動率に応じて色の透明度を調整（±3%で最大濃度）
+    final intensity = (changePct.abs() / 3.0).clamp(0.2, 1.0);
+    final color = change >= 0
+        ? Colors.red.withOpacity(intensity) // 上昇=赤
+        : Colors.green.withOpacity(intensity); // 下落=緑
+
+    final sign = change >= 0 ? '+' : '';
+
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(top: 1),
+      padding: const EdgeInsets.symmetric(vertical: 1),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.2),
+        borderRadius: BorderRadius.circular(2),
+      ),
+      child: Text(
+        '$sign${changePct.toStringAsFixed(1)}%',
+        style: TextStyle(
+          fontSize: 9,
+          color: color,
+          fontWeight: FontWeight.bold,
+        ),
+        textAlign: TextAlign.center,
+      ),
+    );
+  }
+
+  /// カレンダーの凡例を構築する
+  ///
+  /// 日経平均の色の説明とイベントドットの色の説明を表示する。
   Widget _buildLegend() {
+    // イベント種別と対応するカラー名の一覧
     final legends = [
       ('決算', 'red'),
       ('配当落ち', 'blue'),
@@ -342,12 +456,13 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
       ('祝日', 'pink'),
       ('米休場', 'blueGrey'),
     ];
+
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // 日経平均の説明
+          // 日経平均の騰落の説明
           Container(
             width: double.infinity,
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
@@ -358,6 +473,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
             ),
             child: Row(
               children: [
+                // 上昇サンプル
                 Container(
                   width: 28,
                   height: 14,
@@ -382,6 +498,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                   style: TextStyle(fontSize: 10, color: Colors.red),
                 ),
                 const SizedBox(width: 12),
+                // 下落サンプル
                 Container(
                   width: 28,
                   height: 14,
@@ -414,7 +531,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
             ),
           ),
 
-          // イベント凡例
+          // イベントドットの凡例
           Wrap(
             spacing: 8,
             runSpacing: 4,
@@ -444,14 +561,23 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     );
   }
 
+  // ============================================================
+  // イベント一覧UI
+  // ============================================================
+
+  /// カレンダー下部の月間イベント一覧を構築する
+  ///
+  /// 日付ごとにグループ化してリスト表示する。
   Widget _buildEventList() {
     final events = _allEventsThisMonth();
+
     if (events.isEmpty) {
       return const Padding(
         padding: EdgeInsets.all(32),
         child: Text('イベントなし', style: TextStyle(color: Colors.grey)),
       );
     }
+
     return ListView.builder(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
@@ -461,11 +587,13 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
         final dateStr = entry.key;
         final dayEvents = entry.value;
         final dt = DateTime.parse(dateStr);
+
         return Padding(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              // 日付・曜日
               SizedBox(
                 width: 44,
                 child: Column(
@@ -492,6 +620,8 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                 ),
               ),
               const SizedBox(width: 8),
+
+              // イベント一覧
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -528,6 +658,14 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     );
   }
 
+  // ============================================================
+  // 日付タップ時のモーダル
+  // ============================================================
+
+  /// 日付をタップした時のイベント詳細モーダルを表示する
+  ///
+  /// 日経平均のデータがある日はカード形式で騰落を表示する。
+  /// その下にその日のイベント一覧を表示する。
   void _showDayEvents(DateTime date, List<Map<String, dynamic>> events) {
     showModalBottomSheet(
       context: context,
@@ -540,65 +678,15 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // 日付ヘッダー
             Text(
               '${date.year}年${date.month}月${date.day}日',
               style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 12),
 
-            // ★ 日経平均カード ★
-            Builder(
-              builder: (context) {
-                final nk = _nikkeiData[_fmt(date)];
-                if (nk == null) return const SizedBox();
-                final change = (nk['change'] as num).toDouble();
-                final changePct = (nk['change_pct'] as num).toDouble();
-                final close = (nk['close'] as num).toDouble();
-                final isPlus = change >= 0;
-                final sign = isPlus ? '+' : '';
-                final color = isPlus ? Colors.red : Colors.green;
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
-                  child: Container(
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: color.withOpacity(0.08),
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: color.withOpacity(0.3)),
-                    ),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Text(
-                          '📈 日経平均',
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 13,
-                          ),
-                        ),
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.end,
-                          children: [
-                            Text(
-                              '¥${close.toStringAsFixed(0)}',
-                              style: TextStyle(
-                                fontWeight: FontWeight.bold,
-                                fontSize: 14,
-                                color: color,
-                              ),
-                            ),
-                            Text(
-                              '$sign${change.toStringAsFixed(0)}円  $sign${changePct.toStringAsFixed(2)}%',
-                              style: TextStyle(fontSize: 12, color: color),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
-                );
-              },
-            ),
+            // 日経平均カード（データがある日のみ表示）
+            _buildNikkeiDetailCard(date),
 
             // イベント一覧
             ...events.map(
@@ -626,6 +714,62 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
               ),
             ),
             const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// モーダル内の日経平均詳細カードを構築する
+  ///
+  /// データがない日は空のSizedBoxを返す。
+  Widget _buildNikkeiDetailCard(DateTime date) {
+    final nk = _nikkeiData[_fmt(date)];
+    if (nk == null) return const SizedBox();
+
+    final change = (nk['change'] as num).toDouble();
+    final changePct = (nk['change_pct'] as num).toDouble();
+    final close = (nk['close'] as num).toDouble();
+    final isPlus = change >= 0;
+    final sign = isPlus ? '+' : '';
+    final color = isPlus ? Colors.red : Colors.green;
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Container(
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(
+          color: color.withOpacity(0.08),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: color.withOpacity(0.3)),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            const Text(
+              '📈 日経平均',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+            ),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                // 終値
+                Text(
+                  '¥${close.toStringAsFixed(0)}',
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 14,
+                    color: color,
+                  ),
+                ),
+                // 前日比（円＋%）
+                Text(
+                  '$sign${change.toStringAsFixed(0)}円  '
+                  '$sign${changePct.toStringAsFixed(2)}%',
+                  style: TextStyle(fontSize: 12, color: color),
+                ),
+              ],
+            ),
           ],
         ),
       ),

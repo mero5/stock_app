@@ -1,14 +1,22 @@
+// ============================================================
+// PortfolioScreen
+// ポートフォリオ診断画面のUIのみを担当するWidget。
+// ロジック・状態管理はPortfolioViewModelに委譲している。
+// ============================================================
+
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
-import 'dart:convert';
-import '../config/constants.dart';
+import 'package:provider/provider.dart';
+import '../viewmodels/portfolio_viewmodel.dart';
 import '../services/auth_service.dart';
 import '../services/user_profile_service.dart';
 import '../services/stock_service.dart';
+import '../widgets/api_error_banner.dart';
+import '../theme/app_theme.dart';
 
 class PortfolioScreen extends StatefulWidget {
   final bool apiAvailable;
   final String apiErrorMsg;
+
   const PortfolioScreen({
     super.key,
     this.apiAvailable = true,
@@ -20,160 +28,93 @@ class PortfolioScreen extends StatefulWidget {
 }
 
 class _PortfolioScreenState extends State<PortfolioScreen> {
-  final List<Map<String, dynamic>> _holdings = [];
-  Map<String, dynamic>? _result;
-  bool _isAnalyzing = false;
-  String? _userId;
-  Map<String, dynamic>? _userProfile;
-  String _lastPrompt = '';
-  String _selectedPeriod = '中期';
+  // ============================================================
+  // ライフサイクル
+  // ============================================================
 
   @override
   void initState() {
     super.initState();
-    _loadProfile();
+    // ViewModelはProviderから取得するためpostFrameCallbackを使う
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadProfile();
+    });
   }
 
+  /// ユーザープロファイルを取得してViewModelにセットする
   Future<void> _loadProfile() async {
     final userId = await AuthService.getUserId();
     if (userId == null) return;
     final profile = await UserProfileService.getProfile(userId);
-    setState(() {
-      _userId = userId;
-      _userProfile = profile;
-    });
-  }
-
-  void _addHolding() {
-    if (_holdings.length >= 10) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('最大10銘柄まで追加できます')));
-      return;
+    if (mounted) {
+      context.read<PortfolioViewModel>().setUserProfile(profile);
     }
-    setState(() {
-      _holdings.add({
-        "code": "",
-        "name": "",
-        "ticker_code": "",
-        "cost_price": null,
-        "shares": null,
-        "trade_type": "現物",
-        "position": "買い",
-      });
-    });
   }
 
-  void _removeHolding(int index) {
-    setState(() => _holdings.removeAt(index));
-  }
-
+  /// 銘柄検索ダイアログを表示して選択結果をViewModelにセットする
   Future<void> _searchStock(int index) async {
     final result = await showSearch<Map<String, String>?>(
       context: context,
       delegate: _StockSearchDelegate(),
     );
-    if (result != null) {
-      setState(() {
-        _holdings[index]['code'] = result['code'] ?? '';
-        _holdings[index]['name'] = result['name'] ?? '';
-        final code = result['code'] ?? '';
-        _holdings[index]['ticker_code'] = () {
-          if (RegExp(r'^\d{4}$').hasMatch(code)) return '$code.T';
-          if (RegExp(r'^\d{5}$').hasMatch(code))
-            return '${code.substring(0, 4)}.T';
-          return code;
-        }();
-      });
+    if (result != null && mounted) {
+      context.read<PortfolioViewModel>().setStock(index, result);
     }
   }
 
-  Future<void> _analyze() async {
-    if (_holdings.isEmpty ||
-        _holdings.every((h) => h['code'].toString().isEmpty)) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('銘柄を1つ以上追加してください')));
-      return;
-    }
-    final validHoldings = _holdings
-        .where((h) => h['code'].toString().isNotEmpty)
-        .toList();
-
-    setState(() {
-      _isAnalyzing = true;
-      _result = null;
-    });
-
-    try {
-      // ① 先にセクターデータを取得
-      final sectorData = await StockService.getSectorTrends();
-
-      // ② lastPromptにも反映
-      _lastPrompt = jsonEncode({
-        "user_profile": _userProfile ?? {},
-        "holdings": validHoldings,
-        "period": _selectedPeriod,
-        "sector_data": sectorData,
-      });
-
-      // ③ リクエストボディにperiodとsector_dataを追加
-      final res = await http
-          .post(
-            Uri.parse("${Constants.backendUrl}/portfolio/diagnosis"),
-            headers: {"Content-Type": "application/json"},
-            body: jsonEncode({
-              "user_profile": _userProfile ?? {},
-              "holdings": validHoldings,
-              "period": _selectedPeriod,
-              "sector_data": sectorData,
-            }),
-          )
-          .timeout(const Duration(seconds: 120));
-      final data = jsonDecode(res.body) as Map<String, dynamic>;
-      setState(() => _result = data);
-    } catch (e) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('診断に失敗しました: $e')));
-    } finally {
-      setState(() => _isAnalyzing = false);
-    }
-  }
+  // ============================================================
+  // build
+  // ============================================================
 
   @override
   Widget build(BuildContext context) {
+    // ViewModelを監視（状態変化で自動再描画）
+    final vm = context.watch<PortfolioViewModel>();
+
     return Scaffold(
       appBar: AppBar(title: const Text('ポートフォリオ診断')),
-      body: _result != null ? _buildResult() : _buildInput(),
+      body: Column(
+        children: [
+          // APIエラーバナー
+          if (!widget.apiAvailable) ApiErrorBanner(message: widget.apiErrorMsg),
+
+          // 結果画面 or 入力画面を切り替え
+          Expanded(
+            child: vm.result != null ? _buildResult(vm) : _buildInput(vm),
+          ),
+        ],
+      ),
     );
   }
 
-  // ── 入力画面 ──
-  Widget _buildInput() {
+  // ============================================================
+  // 入力画面
+  // ============================================================
+
+  Widget _buildInput(PortfolioViewModel vm) {
     return Column(
       children: [
-        // 注意書き
+        // プライバシー注意書き
         Container(
           width: double.infinity,
           margin: const EdgeInsets.all(12),
           padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(
-            color: Colors.orange.shade50,
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: Colors.orange.shade200),
+            color: AppTheme.warning.shade50,
+            borderRadius: BorderRadius.circular(AppTheme.radiusLg),
+            border: Border.all(color: AppTheme.warning.shade200),
           ),
           child: const Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Icon(Icons.warning_amber, color: Colors.orange, size: 18),
+              Icon(Icons.warning_amber, color: AppTheme.warning, size: 18),
               SizedBox(width: 8),
               Expanded(
                 child: Text(
                   '⚠️ 入力した銘柄情報はサーバーに保存されません。\nAIへの問い合わせにのみ使用されます。',
                   style: TextStyle(
-                    fontSize: 12,
-                    color: Colors.orange,
+                    fontSize: AppTheme.fontMd,
+                    color: AppTheme.warning,
                     height: 1.5,
                   ),
                 ),
@@ -181,103 +122,44 @@ class _PortfolioScreenState extends State<PortfolioScreen> {
             ],
           ),
         ),
+
         Expanded(
           child: ListView(
             padding: const EdgeInsets.symmetric(horizontal: 12),
             children: [
-              ..._holdings.asMap().entries.map((e) => _buildHoldingCard(e.key)),
-              // 追加ボタン
+              // 保有銘柄カード一覧
+              ...vm.holdings.asMap().entries.map(
+                (e) => _buildHoldingCard(e.key, vm),
+              ),
+
+              // 銘柄追加ボタン
               OutlinedButton.icon(
-                onPressed: _addHolding,
+                onPressed: () =>
+                    context.read<PortfolioViewModel>().addHolding(),
                 icon: const Icon(Icons.add),
                 label: const Text('銘柄を追加'),
                 style: OutlinedButton.styleFrom(
                   padding: const EdgeInsets.symmetric(vertical: 12),
                   shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(10),
+                    borderRadius: BorderRadius.circular(AppTheme.radiusLg),
                   ),
                 ),
               ),
-              const SizedBox(height: 12),
-              // 期間選択
-              Padding(
-                padding: const EdgeInsets.only(bottom: 12),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      '診断期間',
-                      style: TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 14,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Row(
-                      children: ['短期', '中期', '長期'].map((v) {
-                        final selected = _selectedPeriod == v;
-                        return Expanded(
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 4),
-                            child: GestureDetector(
-                              onTap: () => setState(() => _selectedPeriod = v),
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(
-                                  vertical: 10,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: selected
-                                      ? Colors.blue
-                                      : Colors.grey.shade100,
-                                  borderRadius: BorderRadius.circular(8),
-                                  border: Border.all(
-                                    color: selected
-                                        ? Colors.blue
-                                        : Colors.grey.shade300,
-                                  ),
-                                ),
-                                child: Column(
-                                  children: [
-                                    Text(
-                                      v,
-                                      style: TextStyle(
-                                        fontWeight: FontWeight.bold,
-                                        color: selected
-                                            ? Colors.white
-                                            : Colors.black87,
-                                      ),
-                                    ),
-                                    Text(
-                                      v == '短期'
-                                          ? '数日〜2週間'
-                                          : v == '中期'
-                                          ? '1〜3ヶ月'
-                                          : '6ヶ月以上',
-                                      style: TextStyle(
-                                        fontSize: 10,
-                                        color: selected
-                                            ? Colors.white70
-                                            : Colors.grey,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          ),
-                        );
-                      }).toList(),
-                    ),
-                  ],
-                ),
-              ),
-              // 診断ボタン
+              const SizedBox(height: AppTheme.spaceMd),
+
+              // 診断期間選択
+              _buildPeriodSelector(vm),
+              const SizedBox(height: AppTheme.spaceMd),
+
+              // 診断実行ボタン
               ElevatedButton.icon(
                 onPressed:
-                    _isAnalyzing || _holdings.isEmpty || !widget.apiAvailable
+                    vm.isAnalyzing ||
+                        vm.holdings.isEmpty ||
+                        !widget.apiAvailable
                     ? null
-                    : _analyze,
-                icon: _isAnalyzing
+                    : () => context.read<PortfolioViewModel>().analyze(),
+                icon: vm.isAnalyzing
                     ? const SizedBox(
                         width: 16,
                         height: 16,
@@ -287,13 +169,13 @@ class _PortfolioScreenState extends State<PortfolioScreen> {
                         ),
                       )
                     : const Icon(Icons.auto_awesome),
-                label: Text(_isAnalyzing ? '診断中...' : '一括AI診断を実行'),
+                label: Text(vm.isAnalyzing ? '診断中...' : '一括AI診断を実行'),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.blue,
                   foregroundColor: Colors.white,
                   padding: const EdgeInsets.symmetric(vertical: 14),
                   shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(10),
+                    borderRadius: BorderRadius.circular(AppTheme.radiusLg),
                   ),
                 ),
               ),
@@ -305,201 +187,62 @@ class _PortfolioScreenState extends State<PortfolioScreen> {
     );
   }
 
-  Widget _buildHoldingCard(int index) {
-    final h = _holdings[index];
-    return Card(
-      margin: const EdgeInsets.only(bottom: 12),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // ヘッダー
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(
-                  '銘柄 ${index + 1}',
-                  style: const TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 13,
-                  ),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.close, size: 18, color: Colors.grey),
-                  onPressed: () => _removeHolding(index),
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            // 銘柄検索
-            GestureDetector(
-              onTap: () => _searchStock(index),
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 10,
-                ),
-                decoration: BoxDecoration(
-                  border: Border.all(color: Colors.grey.shade300),
-                  borderRadius: BorderRadius.circular(8),
-                  color: Colors.grey.shade50,
-                ),
-                child: Row(
-                  children: [
-                    const Icon(Icons.search, size: 18, color: Colors.grey),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        h['name'].toString().isNotEmpty
-                            ? '${h['name']}  (${h['code']})'
-                            : '銘柄を検索',
-                        style: TextStyle(
-                          fontSize: 13,
-                          color: h['name'].toString().isNotEmpty
-                              ? Colors.black87
-                              : Colors.grey,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(height: 10),
-            // 取得単価・株数
-            Row(
-              children: [
-                Expanded(
-                  child: _numberField(
-                    label: '取得単価（任意）',
-                    hint: '例：3500',
-                    onChanged: (v) =>
-                        _holdings[index]['cost_price'] = double.tryParse(v),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: _numberField(
-                    label: '保有株数（任意）',
-                    hint: '例：100',
-                    onChanged: (v) =>
-                        _holdings[index]['shares'] = int.tryParse(v),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 10),
-            // 取引種別・ポジション
-            Row(
-              children: [
-                Expanded(
-                  child: _toggleField(
-                    label: '取引種別',
-                    options: ['現物', '信用'],
-                    selected: h['trade_type'],
-                    onSelect: (v) => setState(() {
-                      _holdings[index]['trade_type'] = v;
-                      // 現物に変更したら空売りをリセット
-                      if (v == '現物' && _holdings[index]['position'] == '空売り') {
-                        _holdings[index]['position'] = '買い';
-                      }
-                    }),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: _toggleField(
-                    label: 'ポジション',
-                    options: h['trade_type'] == '現物' ? ['買い'] : ['買い', '空売り'],
-                    selected: h['position'],
-                    onSelect: (v) =>
-                        setState(() => _holdings[index]['position'] = v),
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
+  // ============================================================
+  // 期間選択UI
+  // ============================================================
 
-  Widget _numberField({
-    required String label,
-    required String hint,
-    required Function(String) onChanged,
-  }) {
+  Widget _buildPeriodSelector(PortfolioViewModel vm) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          label,
-          style: const TextStyle(fontSize: 11, color: Colors.black54),
-        ),
-        const SizedBox(height: 4),
-        TextField(
-          keyboardType: TextInputType.number,
-          onChanged: onChanged,
-          decoration: InputDecoration(
-            hintText: hint,
-            hintStyle: const TextStyle(fontSize: 12),
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(8),
-              borderSide: BorderSide(color: Colors.grey.shade300),
-            ),
-            contentPadding: const EdgeInsets.symmetric(
-              horizontal: 10,
-              vertical: 8,
-            ),
-            isDense: true,
+        const Text(
+          '診断期間',
+          style: TextStyle(
+            fontWeight: FontWeight.bold,
+            fontSize: AppTheme.fontXl,
           ),
         ),
-      ],
-    );
-  }
-
-  Widget _toggleField({
-    required String label,
-    required List<String> options,
-    required String selected,
-    required Function(String) onSelect,
-  }) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          label,
-          style: const TextStyle(fontSize: 11, color: Colors.black54),
-        ),
-        const SizedBox(height: 4),
+        const SizedBox(height: AppTheme.spaceSm),
         Row(
-          children: options.map((opt) {
-            final isSelected = selected == opt;
+          children: ['短期', '中期', '長期'].map((v) {
+            final selected = vm.selectedPeriod == v;
             return Expanded(
-              child: GestureDetector(
-                onTap: () => onSelect(opt),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(vertical: 6),
-                  decoration: BoxDecoration(
-                    color: isSelected ? Colors.blue : Colors.grey.shade100,
-                    borderRadius: BorderRadius.circular(6),
-                    border: Border.all(
-                      color: isSelected ? Colors.blue : Colors.grey.shade300,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                child: GestureDetector(
+                  onTap: () => context.read<PortfolioViewModel>().setPeriod(v),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(vertical: 10),
+                    decoration: BoxDecoration(
+                      color: selected ? Colors.blue : Colors.grey.shade100,
+                      borderRadius: BorderRadius.circular(AppTheme.radiusMd),
+                      border: Border.all(
+                        color: selected ? Colors.blue : Colors.grey.shade300,
+                      ),
                     ),
-                  ),
-                  child: Text(
-                    opt,
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: isSelected ? Colors.white : Colors.black87,
-                      fontWeight: isSelected
-                          ? FontWeight.bold
-                          : FontWeight.normal,
+                    child: Column(
+                      children: [
+                        Text(
+                          v,
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            color: selected
+                                ? Colors.white
+                                : AppTheme.textPrimary,
+                          ),
+                        ),
+                        Text(
+                          v == '短期'
+                              ? '数日〜2週間'
+                              : v == '中期'
+                              ? '1〜3ヶ月'
+                              : '6ヶ月以上',
+                          style: TextStyle(
+                            fontSize: AppTheme.fontXs,
+                            color: selected ? Colors.white70 : Colors.grey,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ),
@@ -511,20 +254,156 @@ class _PortfolioScreenState extends State<PortfolioScreen> {
     );
   }
 
-  // ── 結果画面 ──
-  Widget _buildResult() {
+  // ============================================================
+  // 銘柄入力カード
+  // ============================================================
+
+  Widget _buildHoldingCard(int index, PortfolioViewModel vm) {
+    final h = vm.holdings[index];
+    return Card(
+      margin: const EdgeInsets.only(bottom: 12),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(AppTheme.radiusXl),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // ヘッダー（銘柄番号・削除ボタン）
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  '銘柄 ${index + 1}',
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: AppTheme.fontLg,
+                  ),
+                ),
+                IconButton(
+                  icon: Icon(Icons.close, size: 18, color: Colors.grey),
+                  onPressed: () =>
+                      context.read<PortfolioViewModel>().removeHolding(index),
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(),
+                ),
+              ],
+            ),
+            const SizedBox(height: AppTheme.spaceSm),
+
+            // 銘柄検索フィールド
+            GestureDetector(
+              onTap: () => _searchStock(index),
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 10,
+                ),
+                decoration: BoxDecoration(
+                  border: Border.all(color: Colors.grey.shade300),
+                  borderRadius: BorderRadius.circular(AppTheme.radiusMd),
+                  color: Colors.grey.shade50,
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.search, size: 18, color: Colors.grey),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        h['name'].toString().isNotEmpty
+                            ? '${h['name']}  (${h['code']})'
+                            : '銘柄を検索',
+                        style: TextStyle(
+                          fontSize: AppTheme.fontLg,
+                          color: h['name'].toString().isNotEmpty
+                              ? AppTheme.textPrimary
+                              : Colors.grey,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+
+            // 取得単価・保有株数
+            Row(
+              children: [
+                Expanded(
+                  child: _numberField(
+                    label: '取得単価（任意）',
+                    hint: '例：3500',
+                    onChanged: (v) => context
+                        .read<PortfolioViewModel>()
+                        .updateHolding(index, 'cost_price', double.tryParse(v)),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: _numberField(
+                    label: '保有株数（任意）',
+                    hint: '例：100',
+                    onChanged: (v) => context
+                        .read<PortfolioViewModel>()
+                        .updateHolding(index, 'shares', int.tryParse(v)),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+
+            // 取引種別・ポジション選択
+            Row(
+              children: [
+                Expanded(
+                  child: _toggleField(
+                    label: '取引種別',
+                    options: ['現物', '信用'],
+                    selected: h['trade_type'],
+                    onSelect: (v) => context
+                        .read<PortfolioViewModel>()
+                        .updateHolding(index, 'trade_type', v),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: _toggleField(
+                    label: 'ポジション',
+                    // 現物の場合は買いのみ選択可能
+                    options: h['trade_type'] == '現物' ? ['買い'] : ['買い', '空売り'],
+                    selected: h['position'],
+                    onSelect: (v) => context
+                        .read<PortfolioViewModel>()
+                        .updateHolding(index, 'position', v),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ============================================================
+  // 結果画面
+  // ============================================================
+
+  Widget _buildResult(PortfolioViewModel vm) {
     final market =
-        _result!['market_environment'] as Map<String, dynamic>? ?? {};
-    final holdings = _result!['holdings'] as List? ?? [];
+        vm.result!['market_environment'] as Map<String, dynamic>? ?? {};
+    final holdings = vm.result!['holdings'] as List? ?? [];
     final analysis =
-        _result!['portfolio_analysis'] as Map<String, dynamic>? ?? {};
+        vm.result!['portfolio_analysis'] as Map<String, dynamic>? ?? {};
 
     final riskMode = market['risk_mode'] ?? 'neutral';
     final riskColor = riskMode == 'risk_on'
-        ? Colors.red
+        ? AppTheme.bullish
         : riskMode == 'risk_off'
-        ? Colors.green
-        : Colors.orange;
+        ? AppTheme.bearish
+        : AppTheme.warning;
     final riskLabel = riskMode == 'risk_on'
         ? '🟢 リスクオン'
         : riskMode == 'risk_off'
@@ -537,10 +416,10 @@ class _PortfolioScreenState extends State<PortfolioScreen> {
           child: ListView(
             padding: const EdgeInsets.all(12),
             children: [
-              // 市場環境
+              // 市場環境カード
               Card(
                 shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
+                  borderRadius: BorderRadius.circular(AppTheme.radiusXl),
                 ),
                 color: riskColor.withOpacity(0.05),
                 child: Padding(
@@ -554,7 +433,7 @@ class _PortfolioScreenState extends State<PortfolioScreen> {
                             '🌍 市場環境',
                             style: TextStyle(
                               fontWeight: FontWeight.bold,
-                              fontSize: 14,
+                              fontSize: AppTheme.fontXl,
                             ),
                           ),
                           const Spacer(),
@@ -565,7 +444,9 @@ class _PortfolioScreenState extends State<PortfolioScreen> {
                             ),
                             decoration: BoxDecoration(
                               color: riskColor.withOpacity(0.1),
-                              borderRadius: BorderRadius.circular(12),
+                              borderRadius: BorderRadius.circular(
+                                AppTheme.radiusXl,
+                              ),
                               border: Border.all(
                                 color: riskColor.withOpacity(0.4),
                               ),
@@ -574,25 +455,28 @@ class _PortfolioScreenState extends State<PortfolioScreen> {
                               riskLabel,
                               style: TextStyle(
                                 color: riskColor,
-                                fontSize: 12,
+                                fontSize: AppTheme.fontMd,
                                 fontWeight: FontWeight.bold,
                               ),
                             ),
                           ),
                         ],
                       ),
-                      const SizedBox(height: 8),
+                      const SizedBox(height: AppTheme.spaceSm),
                       Text(
                         market['summary'] ?? '',
-                        style: const TextStyle(fontSize: 13, height: 1.6),
+                        style: const TextStyle(
+                          fontSize: AppTheme.fontLg,
+                          height: 1.6,
+                        ),
                       ),
                     ],
                   ),
                 ),
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: AppTheme.spaceSm),
 
-              // 各銘柄
+              // 各銘柄の診断結果
               ...holdings.map(
                 (h) => _buildHoldingResult(h as Map<String, dynamic>),
               ),
@@ -600,7 +484,7 @@ class _PortfolioScreenState extends State<PortfolioScreen> {
               // ポートフォリオ総評
               Card(
                 shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
+                  borderRadius: BorderRadius.circular(AppTheme.radiusXl),
                 ),
                 color: Colors.blue.shade50,
                 child: Padding(
@@ -612,7 +496,7 @@ class _PortfolioScreenState extends State<PortfolioScreen> {
                         '📝 ポートフォリオ総評',
                         style: TextStyle(
                           fontWeight: FontWeight.bold,
-                          fontSize: 14,
+                          fontSize: AppTheme.fontXl,
                         ),
                       ),
                       const SizedBox(height: 10),
@@ -620,15 +504,18 @@ class _PortfolioScreenState extends State<PortfolioScreen> {
                         const Text(
                           'セクターバランス',
                           style: TextStyle(
-                            fontSize: 12,
-                            color: Colors.black54,
+                            fontSize: AppTheme.fontMd,
+                            color: AppTheme.textSecondary,
                             fontWeight: FontWeight.bold,
                           ),
                         ),
-                        const SizedBox(height: 4),
+                        const SizedBox(height: AppTheme.spaceXs),
                         Text(
                           analysis['sector_balance'],
-                          style: const TextStyle(fontSize: 13, height: 1.6),
+                          style: const TextStyle(
+                            fontSize: AppTheme.fontLg,
+                            height: 1.6,
+                          ),
                         ),
                         const SizedBox(height: 10),
                       ],
@@ -637,15 +524,18 @@ class _PortfolioScreenState extends State<PortfolioScreen> {
                         const Text(
                           '集中リスク',
                           style: TextStyle(
-                            fontSize: 12,
-                            color: Colors.black54,
+                            fontSize: AppTheme.fontMd,
+                            color: AppTheme.textSecondary,
                             fontWeight: FontWeight.bold,
                           ),
                         ),
-                        const SizedBox(height: 4),
+                        const SizedBox(height: AppTheme.spaceXs),
                         Text(
                           analysis['concentration_risk'],
-                          style: const TextStyle(fontSize: 13, height: 1.6),
+                          style: const TextStyle(
+                            fontSize: AppTheme.fontLg,
+                            height: 1.6,
+                          ),
                         ),
                         const SizedBox(height: 10),
                       ],
@@ -653,53 +543,58 @@ class _PortfolioScreenState extends State<PortfolioScreen> {
                         const Text(
                           '総評',
                           style: TextStyle(
-                            fontSize: 12,
-                            color: Colors.black54,
+                            fontSize: AppTheme.fontMd,
+                            color: AppTheme.textSecondary,
                             fontWeight: FontWeight.bold,
                           ),
                         ),
-                        const SizedBox(height: 4),
+                        const SizedBox(height: AppTheme.spaceXs),
                         Text(
                           analysis['overall_comment'],
-                          style: const TextStyle(fontSize: 13, height: 1.6),
+                          style: const TextStyle(
+                            fontSize: AppTheme.fontLg,
+                            height: 1.6,
+                          ),
                         ),
                       ],
                     ],
                   ),
                 ),
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: AppTheme.spaceMd),
             ],
           ),
         ),
+
         // プロンプト確認ボタン
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 12),
           child: SizedBox(
             width: double.infinity,
             child: TextButton.icon(
-              onPressed: () => _showPromptSheet(),
+              onPressed: () => _showPromptSheet(vm),
               icon: const Icon(Icons.code, size: 16),
               label: const Text(
                 'AIに渡したプロンプトを確認',
-                style: TextStyle(fontSize: 12),
+                style: TextStyle(fontSize: AppTheme.fontMd),
               ),
             ),
           ),
         ),
+
         // 再診断ボタン
         Padding(
           padding: const EdgeInsets.all(12),
           child: SizedBox(
             width: double.infinity,
             child: OutlinedButton.icon(
-              onPressed: () => setState(() => _result = null),
+              onPressed: () => context.read<PortfolioViewModel>().resetResult(),
               icon: const Icon(Icons.edit),
               label: const Text('銘柄を編集して再診断'),
               style: OutlinedButton.styleFrom(
                 padding: const EdgeInsets.symmetric(vertical: 12),
                 shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(10),
+                  borderRadius: BorderRadius.circular(AppTheme.radiusLg),
                 ),
               ),
             ),
@@ -709,9 +604,13 @@ class _PortfolioScreenState extends State<PortfolioScreen> {
     );
   }
 
-  void _showPromptSheet() {
-    final prompt = _result?['_prompt']?.toString() ?? '取得できませんでした';
-    final holdingsData = _result?['_holdings_data'] as List? ?? [];
+  // ============================================================
+  // プロンプト確認シート
+  // ============================================================
+
+  void _showPromptSheet(PortfolioViewModel vm) {
+    final prompt = vm.result?['_prompt']?.toString() ?? '取得できませんでした';
+    final holdingsData = vm.result?['_holdings_data'] as List? ?? [];
 
     showModalBottomSheet(
       context: context,
@@ -730,12 +629,11 @@ class _PortfolioScreenState extends State<PortfolioScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // 取得データ一覧
               const Text(
                 '📊 取得データ',
                 style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: AppTheme.spaceSm),
               ...holdingsData.map((h) {
                 final m = h as Map<String, dynamic>;
                 return Card(
@@ -749,7 +647,7 @@ class _PortfolioScreenState extends State<PortfolioScreen> {
                           '${m['name']}（${m['code']}）',
                           style: const TextStyle(
                             fontWeight: FontWeight.bold,
-                            fontSize: 13,
+                            fontSize: AppTheme.fontLg,
                           ),
                         ),
                         const SizedBox(height: 6),
@@ -770,22 +668,24 @@ class _PortfolioScreenState extends State<PortfolioScreen> {
                 );
               }),
               const Divider(height: 24),
-              // プロンプト全文
               const Text(
                 '📝 AIプロンプト全文',
                 style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: AppTheme.spaceSm),
               Container(
                 padding: const EdgeInsets.all(10),
                 decoration: BoxDecoration(
                   color: Colors.grey.shade50,
-                  borderRadius: BorderRadius.circular(8),
+                  borderRadius: BorderRadius.circular(AppTheme.radiusMd),
                   border: Border.all(color: Colors.grey.shade200),
                 ),
                 child: SelectableText(
                   prompt,
-                  style: const TextStyle(fontSize: 11, height: 1.5),
+                  style: const TextStyle(
+                    fontSize: AppTheme.fontSm,
+                    height: 1.5,
+                  ),
                 ),
               ),
             ],
@@ -795,34 +695,17 @@ class _PortfolioScreenState extends State<PortfolioScreen> {
     );
   }
 
-  Widget _dataRow(String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 3),
-      child: Row(
-        children: [
-          SizedBox(
-            width: 100,
-            child: Text(
-              label,
-              style: const TextStyle(fontSize: 12, color: Colors.black54),
-            ),
-          ),
-          Text(
-            value,
-            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
-          ),
-        ],
-      ),
-    );
-  }
+  // ============================================================
+  // 銘柄診断結果カード
+  // ============================================================
 
   Widget _buildHoldingResult(Map<String, dynamic> h) {
     final verdict = h['verdict'] ?? '様子見';
     final verdictMap = {
       '継続保有': (Colors.blue, Icons.pause_circle),
-      '買い増し': (Colors.red, Icons.add_chart),
-      '利確推奨': (Colors.green, Icons.trending_up),
-      '損切り推奨': (Colors.green.shade800, Icons.trending_down),
+      '買い増し': (AppTheme.bullish, Icons.add_chart),
+      '利確推奨': (AppTheme.bearish, Icons.trending_up),
+      '損切り推奨': (AppTheme.bearish.shade800, Icons.trending_down),
     };
     final (color, icon) =
         verdictMap[verdict] ?? (Colors.grey, Icons.help_outline);
@@ -830,7 +713,6 @@ class _PortfolioScreenState extends State<PortfolioScreen> {
     final plPct = h['profit_loss_pct'];
     final plYen = h['profit_loss_yen'];
     final isProfit = plPct != null && plPct is num && (plPct as num) >= 0;
-
     final prob = h['probability'] as Map<String, dynamic>? ?? {};
     final confidence = h['confidence'] as Map<String, dynamic>? ?? {};
     final priceStrategy = h['price_strategy'] as Map<String, dynamic>? ?? {};
@@ -840,13 +722,15 @@ class _PortfolioScreenState extends State<PortfolioScreen> {
 
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(AppTheme.radiusXl),
+      ),
       child: Padding(
         padding: const EdgeInsets.all(14),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // ── 銘柄名・判定バッジ ──
+            // 銘柄名・判定バッジ
             Row(
               children: [
                 Expanded(
@@ -863,7 +747,7 @@ class _PortfolioScreenState extends State<PortfolioScreen> {
                       Text(
                         h['code'] ?? '',
                         style: const TextStyle(
-                          fontSize: 12,
+                          fontSize: AppTheme.fontMd,
                           color: Colors.grey,
                         ),
                       ),
@@ -889,7 +773,7 @@ class _PortfolioScreenState extends State<PortfolioScreen> {
                         verdict,
                         style: TextStyle(
                           color: color,
-                          fontSize: 12,
+                          fontSize: AppTheme.fontMd,
                           fontWeight: FontWeight.bold,
                         ),
                       ),
@@ -898,9 +782,9 @@ class _PortfolioScreenState extends State<PortfolioScreen> {
                 ),
               ],
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: AppTheme.spaceMd),
 
-            // ── 株価・損益 ──
+            // 株価・損益チップ
             Wrap(
               spacing: 8,
               runSpacing: 8,
@@ -908,31 +792,34 @@ class _PortfolioScreenState extends State<PortfolioScreen> {
                 _infoChip(
                   '現在値',
                   '¥${_fmt(h['current_price'])}',
-                  Colors.black87,
+                  AppTheme.textPrimary,
                 ),
                 if (plPct != null && plPct is num)
                   _infoChip(
                     '損益',
                     '${(plPct as num) >= 0 ? '+' : ''}${(plPct as num).toStringAsFixed(1)}%'
                         '${plYen != null ? '  ¥${_fmtInt(plYen)}' : ''}',
-                    isProfit ? Colors.red : Colors.green,
+                    isProfit ? AppTheme.bullish : AppTheme.bearish,
                   ),
               ],
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: AppTheme.spaceMd),
 
-            // ── 確率バー ──
+            // 判断確率バー
             const Text(
               '📊 判断確率',
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: AppTheme.fontLg,
+              ),
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: AppTheme.spaceSm),
             ...['hold', 'add', 'take_profit', 'cut_loss'].map((key) {
               final labelMap = {
                 'hold': ('継続保有', Colors.blue),
-                'add': ('買い増し', Colors.red),
-                'take_profit': ('利確', Colors.green),
-                'cut_loss': ('損切り', Colors.orange),
+                'add': ('買い増し', AppTheme.bullish),
+                'take_profit': ('利確', AppTheme.bearish),
+                'cut_loss': ('損切り', AppTheme.warning),
               };
               final (label, barColor) = labelMap[key]!;
               final entry = prob[key] as Map<String, dynamic>? ?? {};
@@ -949,7 +836,7 @@ class _PortfolioScreenState extends State<PortfolioScreen> {
                           width: 60,
                           child: Text(
                             label,
-                            style: const TextStyle(fontSize: 12),
+                            style: const TextStyle(fontSize: AppTheme.fontMd),
                           ),
                         ),
                         Expanded(
@@ -979,7 +866,7 @@ class _PortfolioScreenState extends State<PortfolioScreen> {
                         Text(
                           '$val%',
                           style: TextStyle(
-                            fontSize: 12,
+                            fontSize: AppTheme.fontMd,
                             fontWeight: FontWeight.bold,
                             color: barColor,
                           ),
@@ -992,8 +879,8 @@ class _PortfolioScreenState extends State<PortfolioScreen> {
                         child: Text(
                           reason,
                           style: const TextStyle(
-                            fontSize: 11,
-                            color: Colors.black54,
+                            fontSize: AppTheme.fontSm,
+                            color: AppTheme.textSecondary,
                             height: 1.4,
                           ),
                         ),
@@ -1002,16 +889,19 @@ class _PortfolioScreenState extends State<PortfolioScreen> {
                 ),
               );
             }),
-            const SizedBox(height: 4),
+            const SizedBox(height: AppTheme.spaceXs),
 
-            // ── 信頼度 ──
+            // 信頼度
             if (confidence.isNotEmpty) ...[
               const Divider(),
               Row(
                 children: [
                   const Text(
                     '信頼度：',
-                    style: TextStyle(fontSize: 12, color: Colors.black54),
+                    style: TextStyle(
+                      fontSize: AppTheme.fontMd,
+                      color: AppTheme.textSecondary,
+                    ),
                   ),
                   _confidenceBadge(confidence['value'] ?? 'medium'),
                   const SizedBox(width: 8),
@@ -1019,8 +909,8 @@ class _PortfolioScreenState extends State<PortfolioScreen> {
                     child: Text(
                       confidence['reason'] ?? '',
                       style: const TextStyle(
-                        fontSize: 11,
-                        color: Colors.black54,
+                        fontSize: AppTheme.fontSm,
+                        color: AppTheme.textSecondary,
                       ),
                     ),
                   ),
@@ -1029,60 +919,68 @@ class _PortfolioScreenState extends State<PortfolioScreen> {
             ],
             const Divider(),
 
-            // ── 価格戦略 ──
+            // 価格戦略
             const Text(
               '💰 価格戦略',
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: AppTheme.fontLg,
+              ),
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: AppTheme.spaceSm),
             if (priceStrategy['take_profit'] != null) ...[
               _strategyRow(
                 '利確目安',
                 '¥${_fmt((priceStrategy['take_profit'] as Map)['value'])}',
                 (priceStrategy['take_profit'] as Map)['reason'] ?? '',
-                Colors.green,
+                AppTheme.bearish,
               ),
               const SizedBox(height: 6),
             ],
-            if (priceStrategy['stop_loss'] != null) ...[
+            if (priceStrategy['stop_loss'] != null)
               _strategyRow(
                 '損切ライン',
                 '¥${_fmt((priceStrategy['stop_loss'] as Map)['value'])}',
                 (priceStrategy['stop_loss'] as Map)['reason'] ?? '',
-                Colors.orange,
+                AppTheme.warning,
               ),
-            ],
             const Divider(),
 
-            // ── マクロ影響 ──
+            // マクロ影響
             if (macroImpact.isNotEmpty) ...[
               Row(
                 children: [
                   const Text(
                     '🌍 市場環境の影響：',
-                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                    style: TextStyle(
+                      fontSize: AppTheme.fontMd,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                   const SizedBox(width: 6),
                   _macroImpactBadge(macroImpact['value'] ?? 'neutral'),
                 ],
               ),
-              const SizedBox(height: 4),
+              const SizedBox(height: AppTheme.spaceXs),
               Text(
                 macroImpact['reason'] ?? '',
                 style: const TextStyle(
-                  fontSize: 12,
-                  color: Colors.black54,
+                  fontSize: AppTheme.fontMd,
+                  color: AppTheme.textSecondary,
                   height: 1.5,
                 ),
               ),
               const Divider(),
             ],
 
-            // ── ポジティブ・ネガティブ ──
+            // ポジティブポイント
             if (positivePoints.isNotEmpty) ...[
               const Text(
                 '✅ 保有・買い増し根拠',
-                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: AppTheme.fontLg,
+                ),
               ),
               const SizedBox(height: 6),
               ...positivePoints.map(
@@ -1093,24 +991,35 @@ class _PortfolioScreenState extends State<PortfolioScreen> {
                     children: [
                       const Text(
                         '・',
-                        style: TextStyle(color: Colors.red, fontSize: 13),
+                        style: TextStyle(
+                          color: AppTheme.bullish,
+                          fontSize: AppTheme.fontLg,
+                        ),
                       ),
                       Expanded(
                         child: Text(
                           p.toString(),
-                          style: const TextStyle(fontSize: 12, height: 1.5),
+                          style: const TextStyle(
+                            fontSize: AppTheme.fontMd,
+                            height: 1.5,
+                          ),
                         ),
                       ),
                     ],
                   ),
                 ),
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: AppTheme.spaceSm),
             ],
+
+            // ネガティブポイント
             if (negativePoints.isNotEmpty) ...[
               const Text(
                 '⚠️ リスク・売却根拠',
-                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: AppTheme.fontLg,
+                ),
               ),
               const SizedBox(height: 6),
               ...negativePoints.map(
@@ -1121,12 +1030,18 @@ class _PortfolioScreenState extends State<PortfolioScreen> {
                     children: [
                       const Text(
                         '・',
-                        style: TextStyle(color: Colors.green, fontSize: 13),
+                        style: TextStyle(
+                          color: AppTheme.bearish,
+                          fontSize: AppTheme.fontLg,
+                        ),
                       ),
                       Expanded(
                         child: Text(
                           p.toString(),
-                          style: const TextStyle(fontSize: 12, height: 1.5),
+                          style: const TextStyle(
+                            fontSize: AppTheme.fontMd,
+                            height: 1.5,
+                          ),
                         ),
                       ),
                     ],
@@ -1136,15 +1051,18 @@ class _PortfolioScreenState extends State<PortfolioScreen> {
               const Divider(),
             ],
 
-            // ── サマリー ──
+            // 総合サマリー
             const Text(
               '📝 総合サマリー',
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: AppTheme.fontLg,
+              ),
             ),
             const SizedBox(height: 6),
             Text(
               h['summary'] ?? '',
-              style: const TextStyle(fontSize: 13, height: 1.6),
+              style: const TextStyle(fontSize: AppTheme.fontLg, height: 1.6),
             ),
           ],
         ),
@@ -1152,6 +1070,102 @@ class _PortfolioScreenState extends State<PortfolioScreen> {
     );
   }
 
+  // ============================================================
+  // 共通UIパーツ
+  // ============================================================
+
+  /// 数値入力フィールド（取得単価・保有株数用）
+  Widget _numberField({
+    required String label,
+    required String hint,
+    required Function(String) onChanged,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: const TextStyle(
+            fontSize: AppTheme.fontSm,
+            color: AppTheme.textSecondary,
+          ),
+        ),
+        const SizedBox(height: AppTheme.spaceXs),
+        TextField(
+          keyboardType: TextInputType.number,
+          onChanged: onChanged,
+          decoration: InputDecoration(
+            hintText: hint,
+            hintStyle: const TextStyle(fontSize: AppTheme.fontMd),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(AppTheme.radiusMd),
+              borderSide: BorderSide(color: Colors.grey.shade300),
+            ),
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: 10,
+              vertical: 8,
+            ),
+            isDense: true,
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// トグル選択フィールド（現物/信用、買い/空売り用）
+  Widget _toggleField({
+    required String label,
+    required List<String> options,
+    required String selected,
+    required Function(String) onSelect,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: const TextStyle(
+            fontSize: AppTheme.fontSm,
+            color: AppTheme.textSecondary,
+          ),
+        ),
+        const SizedBox(height: AppTheme.spaceXs),
+        Row(
+          children: options.map((opt) {
+            final isSelected = selected == opt;
+            return Expanded(
+              child: GestureDetector(
+                onTap: () => onSelect(opt),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(vertical: 6),
+                  decoration: BoxDecoration(
+                    color: isSelected ? Colors.blue : Colors.grey.shade100,
+                    borderRadius: BorderRadius.circular(AppTheme.radiusSm),
+                    border: Border.all(
+                      color: isSelected ? Colors.blue : Colors.grey.shade300,
+                    ),
+                  ),
+                  child: Text(
+                    opt,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: AppTheme.fontMd,
+                      color: isSelected ? Colors.white : AppTheme.textPrimary,
+                      fontWeight: isSelected
+                          ? FontWeight.bold
+                          : FontWeight.normal,
+                    ),
+                  ),
+                ),
+              ),
+            );
+          }).toList(),
+        ),
+      ],
+    );
+  }
+
+  /// 価格戦略の行（利確・損切り用）
   Widget _strategyRow(String label, String value, String reason, Color color) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1162,13 +1176,13 @@ class _PortfolioScreenState extends State<PortfolioScreen> {
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
               decoration: BoxDecoration(
                 color: color.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(6),
+                borderRadius: BorderRadius.circular(AppTheme.radiusSm),
                 border: Border.all(color: color.withOpacity(0.3)),
               ),
               child: Text(
                 label,
                 style: TextStyle(
-                  fontSize: 11,
+                  fontSize: AppTheme.fontSm,
                   color: color,
                   fontWeight: FontWeight.bold,
                 ),
@@ -1178,7 +1192,7 @@ class _PortfolioScreenState extends State<PortfolioScreen> {
             Text(
               value,
               style: TextStyle(
-                fontSize: 14,
+                fontSize: AppTheme.fontXl,
                 color: color,
                 fontWeight: FontWeight.bold,
               ),
@@ -1191,8 +1205,8 @@ class _PortfolioScreenState extends State<PortfolioScreen> {
             child: Text(
               reason,
               style: const TextStyle(
-                fontSize: 11,
-                color: Colors.black54,
+                fontSize: AppTheme.fontSm,
+                color: AppTheme.textSecondary,
                 height: 1.5,
               ),
             ),
@@ -1201,24 +1215,25 @@ class _PortfolioScreenState extends State<PortfolioScreen> {
     );
   }
 
+  /// 信頼度バッジ（high/medium/low）
   Widget _confidenceBadge(String value) {
     final map = {
-      'high': ('高', Colors.green),
-      'medium': ('中', Colors.orange),
-      'low': ('低', Colors.red),
+      'high': ('高', AppTheme.bearish),
+      'medium': ('中', AppTheme.warning),
+      'low': ('低', AppTheme.bullish),
     };
-    final (label, color) = map[value] ?? ('中', Colors.orange);
+    final (label, color) = map[value] ?? ('中', AppTheme.warning);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
       decoration: BoxDecoration(
         color: color.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: BorderRadius.circular(AppTheme.radiusLg),
         border: Border.all(color: color.withOpacity(0.3)),
       ),
       child: Text(
         label,
         style: TextStyle(
-          fontSize: 11,
+          fontSize: AppTheme.fontSm,
           color: color,
           fontWeight: FontWeight.bold,
         ),
@@ -1226,10 +1241,11 @@ class _PortfolioScreenState extends State<PortfolioScreen> {
     );
   }
 
+  /// マクロ影響バッジ（positive/negative/neutral）
   Widget _macroImpactBadge(String value) {
     final map = {
-      'positive': ('ポジティブ', Colors.red),
-      'negative': ('ネガティブ', Colors.green),
+      'positive': ('ポジティブ', AppTheme.bullish),
+      'negative': ('ネガティブ', AppTheme.bearish),
       'neutral': ('中立', Colors.grey),
     };
     final (label, color) = map[value] ?? ('中立', Colors.grey);
@@ -1237,13 +1253,13 @@ class _PortfolioScreenState extends State<PortfolioScreen> {
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
       decoration: BoxDecoration(
         color: color.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: BorderRadius.circular(AppTheme.radiusLg),
         border: Border.all(color: color.withOpacity(0.3)),
       ),
       child: Text(
         label,
         style: TextStyle(
-          fontSize: 11,
+          fontSize: AppTheme.fontSm,
           color: color,
           fontWeight: FontWeight.bold,
         ),
@@ -1251,12 +1267,13 @@ class _PortfolioScreenState extends State<PortfolioScreen> {
     );
   }
 
+  /// 情報チップ（現在値・損益表示用）
   Widget _infoChip(String label, String value, Color color) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
       decoration: BoxDecoration(
         color: color.withOpacity(0.08),
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(AppTheme.radiusMd),
         border: Border.all(color: color.withOpacity(0.2)),
       ),
       child: Column(
@@ -1264,12 +1281,15 @@ class _PortfolioScreenState extends State<PortfolioScreen> {
         children: [
           Text(
             label,
-            style: const TextStyle(fontSize: 10, color: Colors.black45),
+            style: const TextStyle(
+              fontSize: AppTheme.fontXs,
+              color: AppTheme.textTertiary,
+            ),
           ),
           Text(
             value,
             style: TextStyle(
-              fontSize: 13,
+              fontSize: AppTheme.fontLg,
               color: color,
               fontWeight: FontWeight.bold,
             ),
@@ -1279,6 +1299,35 @@ class _PortfolioScreenState extends State<PortfolioScreen> {
     );
   }
 
+  /// データ行（プロンプト確認シート用）
+  Widget _dataRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 3),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 100,
+            child: Text(
+              label,
+              style: const TextStyle(
+                fontSize: AppTheme.fontMd,
+                color: AppTheme.textSecondary,
+              ),
+            ),
+          ),
+          Text(
+            value,
+            style: const TextStyle(
+              fontSize: AppTheme.fontMd,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 数値フォーマット（小数点以下の処理）
   String _fmt(dynamic val) {
     if (val == null) return '---';
     if (val is String) return val;
@@ -1286,6 +1335,7 @@ class _PortfolioScreenState extends State<PortfolioScreen> {
     return n.toStringAsFixed(n.truncateToDouble() == n ? 0 : 1);
   }
 
+  /// 整数フォーマット（3桁カンマ区切り）
   String _fmtInt(dynamic val) {
     if (val == null) return '---';
     if (val is String) return val;
@@ -1297,7 +1347,11 @@ class _PortfolioScreenState extends State<PortfolioScreen> {
   }
 }
 
+// ============================================================
 // 銘柄検索デリゲート
+// SearchDelegateを継承した銘柄検索UI
+// showSearch()で呼び出され、選択した銘柄をMapで返す
+// ============================================================
 class _StockSearchDelegate extends SearchDelegate<Map<String, String>?> {
   List<Map<String, String>> _results = [];
   bool _isSearching = false;
