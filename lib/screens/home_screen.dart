@@ -27,6 +27,7 @@ import 'market_screen.dart';
 import 'settings_screen.dart';
 import 'portfolio_screen.dart';
 import '../widgets/api_error_banner.dart';
+import '../widgets/notice_dialog.dart';
 import 'package:provider/provider.dart';
 import '../viewmodels/detail_viewmodel.dart';
 
@@ -45,6 +46,17 @@ class _HomeScreenState extends State<HomeScreen> {
 
   /// 現在選択中のボトムナビゲーションのインデックス
   int _currentIndex = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    // 未読のアップデート告知があれば、最初の描画が終わってから表示する
+    // （initState中はまだダイアログを出せないため）
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      NoticeDialog.showIfUnread(context);
+    });
+  }
 
   // ============================================================
   // ログアウト

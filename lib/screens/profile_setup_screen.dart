@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../services/user_profile_service.dart';
 import 'home_screen.dart';
+import '../widgets/notice_dialog.dart';
 
 // AI分析の優先度：項目キー → 表示名
 const Map<String, String> kPriorityLabels = {
@@ -173,6 +174,10 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
     if (!mounted) return;
     if (success) {
       if (widget.isInitial) {
+        // 新規ユーザーに「新しくなりました」と伝える意味はないので、
+        // ポップアップを出さずに既読扱いにしておく
+        await NoticeDialog.markAsRead();
+        if (!mounted) return;
         Navigator.pushAndRemoveUntil(
           context,
           MaterialPageRoute(builder: (_) => const HomeScreen()),
