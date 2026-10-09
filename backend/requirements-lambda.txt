@@ -1,0 +1,11 @@
+-r requirements.txt
+# requirements.txt に未記載だが main.py / routers / services が import しているもの
+python-dotenv
+openai
+google-generativeai
+google-api-python-client
+pandas
+numpy
+boto3
+# Lambda 用アダプタ
+mangum
