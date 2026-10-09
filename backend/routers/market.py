@@ -281,8 +281,19 @@ def get_nikkei_monthly(year: int, month: int):
 def get_sector_trends(period: str = "5d"):
     """
     日本・米国の主要セクターETFの騰落を取得して返す
+
+    29本のETFを1本ずつyfinanceから取得するので重い（数秒〜十数秒）。
+    しかもアプリはAI診断・ポートフォリオ診断のたびにこのAPIを呼ぶので、
+    15分キャッシュする（騰落率は15分程度の遅れで十分）。
     """
     import datetime
+
+    period = "1mo" if period == "1mo" else "5d"
+    cache_key = {'cache_key': f'sectors_{period}'}
+    cached = cache_get(market_cache_table, cache_key)
+    if cached and isinstance(cached.get("jp"), list):
+        print(f"セクター: キャッシュヒット（{period}）")
+        return {"jp": cached["jp"], "us": cached.get("us", [])}
 
     # 日本セクターETF（東証ETF）
     jp_sectors = {
@@ -360,6 +371,9 @@ def get_sector_trends(period: str = "5d"):
     result["jp"].sort(key=lambda x: x["change_pct"], reverse=True)
     result["us"].sort(key=lambda x: x["change_pct"], reverse=True)
 
+    # 1本も取れなかった（yfinance障害など）ときは、空の結果をキャッシュしない
+    if result["jp"] or result["us"]:
+        cache_set(market_cache_table, cache_key, result, ttl_minutes=15)
     return result
 
 
