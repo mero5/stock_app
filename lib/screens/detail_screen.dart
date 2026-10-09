@@ -3141,20 +3141,20 @@ class _DetailScreenState extends State<DetailScreen> {
       // マクロ
       'vix': 'VIX（恐怖指数）',
       'us10y': '米10年債利回り',
-      'us2y': '米2年債利回り',
+      'us3m': '米3ヶ月債利回り',
       'usd_jpy': 'ドル円',
       'dxy': 'ドル指数（DXY）',
       'oil_price': '原油（WTI）',
       'gold_price': '金（Gold）',
       'nikkei_trend': '日経平均トレンド',
       'sp500_trend': 'S&P500トレンド',
-      'yield_spread': '金利差（10年−2年）',
+      'yield_spread': '金利差（10年−3ヶ月）',
       'margin_ratio': '信用倍率',
       'short_ratio': '空売り比率',
       // 騰落レシオ
       'advancers': '上昇銘柄数',
       'decliners': '下落銘柄数',
-      'advance_decline_ratio': '騰落レシオ',
+      'advance_decline_ratio': '騰落レシオ（簡易・%）',
       'cache_key': 'キャッシュキー',
     };
 
