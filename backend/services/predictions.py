@@ -22,6 +22,7 @@ import yfinance as yf
 from boto3.dynamodb.conditions import Attr
 
 from services.cache import predictions_table, _to_decimal, _from_decimal
+from services.market_data import drop_empty_rows
 
 
 # 「上昇」「下落」と判定する変化率のしきい値（%）
@@ -164,7 +165,7 @@ def _close_on_or_before(ticker_code: str, target: date):
         # 前後に余裕を持って取得してから対象日以前の最後の行を取る
         start = target - timedelta(days=10)
         end   = target + timedelta(days=2)
-        hist = t.history(start=str(start), end=str(end))
+        hist = drop_empty_rows(t.history(start=str(start), end=str(end)))
         if hist.empty:
             return None
         hist = hist[hist.index.date <= target]

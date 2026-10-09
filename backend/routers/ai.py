@@ -15,6 +15,7 @@ from services.technical import (
     resolve_sector_trend, normalize_checks, PROMPT_VERSION
 )
 from services.predictions import save_prediction, resolve_horizon_days
+from services.market_data import drop_empty_rows
 import math
 from fastapi.responses import JSONResponse
 
@@ -140,7 +141,7 @@ async def get_ai_analysis(code: str):
             ticker = yf.Ticker(code)
 
         info = ticker.info
-        hist = ticker.history(period="3mo")
+        hist = drop_empty_rows(ticker.history(period="3mo"))
         raw_news = ticker.news[:5] if ticker.news else []
 
         # ── ニュース整形 ──

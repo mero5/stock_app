@@ -6,6 +6,7 @@ import exchange_calendars as xcals
 from fastapi import APIRouter, Request
 from services.technical import get_nikkei225_breadth
 from services.cache import cache_get, cache_set, market_cache_table
+from services.market_data import drop_empty_rows
 
 
 router = APIRouter()
@@ -248,7 +249,7 @@ def get_nikkei_monthly(year: int, month: int):
         start = datetime.date(year, month, 1) - datetime.timedelta(days=5)
         end   = datetime.date(year, month + 1, 1) if month < 12 \
                 else datetime.date(year + 1, 1, 1)
-        hist  = ticker.history(start=str(start), end=str(end))
+        hist  = drop_empty_rows(ticker.history(start=str(start), end=str(end)))
 
         result = {}
         prev_close = None
@@ -325,7 +326,7 @@ def get_sector_trends(period: str = "5d"):
     for name, ticker_code in {**jp_sectors, **us_sectors}.items():
         try:
             ticker = yf.Ticker(ticker_code)
-            hist = ticker.history(period="1mo" if period == "1mo" else "6d")
+            hist = drop_empty_rows(ticker.history(period="1mo" if period == "1mo" else "6d"))
             if len(hist) < 2:
                 continue
             prev  = float(hist["Close"].iloc[-2])
