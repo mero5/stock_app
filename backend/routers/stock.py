@@ -4,6 +4,7 @@ import requests
 import yfinance as yf
 from fastapi import APIRouter
 from services.cache import stock_cache_table, cache_get, cache_set
+from config.timeouts import JQUANTS_TIMEOUT
 
 
 # main.pyから注入される変数
@@ -334,7 +335,8 @@ def get_stock_events(codes: str):
                     res = requests.get(
                         "https://api.jquants.com/v2/fins/announcement",
                         headers={"x-api-key": JQUANTS_API_KEY},
-                        params={"code": (code[:-1] if len(code) == 5 else code) + "0"}
+                        params={"code": (code[:-1] if len(code) == 5 else code) + "0"},
+                        timeout=JQUANTS_TIMEOUT,
                     )
                     data = res.json()
                     announcements = data.get("announcement", [])

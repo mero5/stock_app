@@ -3,6 +3,7 @@ import json
 from fastapi import APIRouter, Request
 from googleapiclient.discovery import build
 import google.generativeai as genai
+from config.timeouts import GEMINI_TIMEOUT_SEC
 from services.cache import cache_get, cache_set, market_cache_table
 
 router = APIRouter()
@@ -69,7 +70,8 @@ async def summarize_video(request: Request):
     try:
         model    = genai.GenerativeModel("gemini-2.5-flash")
         response = model.generate_content(
-            [{"role": "user", "parts": [{"text": prompt}]}]
+            [{"role": "user", "parts": [{"text": prompt}]}],
+            request_options={"timeout": GEMINI_TIMEOUT_SEC},
         )
         raw    = response.text.strip().replace("```json", "").replace("```", "").strip()
         parsed = json.loads(raw)
