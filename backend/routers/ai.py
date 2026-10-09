@@ -7,6 +7,8 @@ from openai import OpenAI
 import yfinance as yf
 import google.generativeai as genai
 from config.timeouts import GEMINI_TIMEOUT_SEC
+from config.ai_models import OPENAI_ANALYSIS_MODEL, OPENAI_LIGHT_MODEL
+from services.openai_params import openai_limit_params
 from services.technical import (
     get_technical_data, get_fundamental_data,
     get_macro_data, get_nikkei225_breadth,
@@ -92,13 +94,15 @@ def error_response(payload: dict) -> Response:
 
 
 def call_openai_json(prompt: str, system: str, max_tokens: int = 4000,
-                     model: str = "gpt-4o"):
+                     model: str = OPENAI_ANALYSIS_MODEL):
     """
     OpenAIを呼んでJSONを取得する共通処理。
 
     ・response_format で JSON 以外を返させない
     ・max_tokens 切れ（finish_reason == "length"）を専用エラーで検出する
       → これを見逃すと「途中で切れたJSON」をパースして毎回失敗していた
+    ・[max_tokens] は回答（JSON）の分。GPT-5系では思考の分が自動で足される
+      （services/openai_params.py）
 
     戻り値は (パース結果, トークン使用量)。
     使用量は予測記録に残して実コストを追えるようにする。
@@ -109,8 +113,8 @@ def call_openai_json(prompt: str, system: str, max_tokens: int = 4000,
             {"role": "system", "content": system},
             {"role": "user",   "content": prompt},
         ],
-        max_tokens=max_tokens,
         response_format={"type": "json_object"},
+        **openai_limit_params(model, max_tokens),
     )
     choice = res.choices[0]
     if choice.finish_reason == "length":
@@ -172,7 +176,7 @@ async def get_ai_analysis(code: str):
 
                 # タイトル翻訳
                 title_res = openai_client.chat.completions.create(
-                    model="gpt-4o-mini",
+                    model=OPENAI_LIGHT_MODEL,
                     messages=[
                         {
                             "role": "system",
@@ -194,7 +198,7 @@ async def get_ai_analysis(code: str):
 
                 # 要約翻訳
                 summary_res = openai_client.chat.completions.create(
-                    model="gpt-4o-mini",
+                    model=OPENAI_LIGHT_MODEL,
                     messages=[
                         {
                             "role": "system",
@@ -410,7 +414,7 @@ PER: {per}倍 / PBR: {pbr}倍 / ROE: {roe}
             prompt,
             system="あなたは日本株・米国株に詳しい投資アドバイザーです。必ずJSON形式のみで返してください。",
             max_tokens=3000,
-            model="gpt-4o-mini",
+            model=OPENAI_LIGHT_MODEL,
         )
         return result
     except json.JSONDecodeError as e:

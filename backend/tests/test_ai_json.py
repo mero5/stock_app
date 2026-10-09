@@ -12,6 +12,10 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from config.ai_models import (
+    OPENAI_ANALYSIS_MODEL, OPENAI_LIGHT_MODEL,
+    OPENAI_REASONING_EFFORT, OPENAI_REASONING_TOKEN_BUDGET,
+)
 from routers import ai
 
 
@@ -69,6 +73,31 @@ def test_call_openai_json_detects_truncation(use_fake_ai):
     use_fake_ai('{"a": ', finish_reason="length")
     with pytest.raises(ValueError, match="max_tokens"):
         ai.call_openai_json("p", system="s")
+
+
+def test_call_openai_json_uses_gpt5_params_by_default(use_fake_ai):
+    """既定（分析用）は GPT-5系。max_tokens は送らず、思考の分を足した上限と考える量を送る"""
+    fake = use_fake_ai('{"a": 1}')
+    ai.call_openai_json("p", system="s", max_tokens=4000)
+
+    call = fake.calls[0]
+    assert call["model"] == OPENAI_ANALYSIS_MODEL
+    assert call["model"].startswith("gpt-5")
+    # GPT-5系に max_tokens を送ると 400 エラーになる
+    assert "max_tokens" not in call
+    assert call["max_completion_tokens"] == 4000 + OPENAI_REASONING_TOKEN_BUDGET
+    assert call["reasoning_effort"] == OPENAI_REASONING_EFFORT
+
+
+def test_call_openai_json_light_model_has_no_reasoning(use_fake_ai):
+    """gpt-4o-mini（相談）には reasoning_effort を送らない（送るとエラーになる）"""
+    fake = use_fake_ai('{"a": 1}')
+    ai.call_openai_json("p", system="s", max_tokens=3000, model=OPENAI_LIGHT_MODEL)
+
+    call = fake.calls[0]
+    assert "max_tokens" not in call
+    assert "reasoning_effort" not in call
+    assert call["max_completion_tokens"] == 3000
 
 
 def test_call_openai_json_raises_on_broken_json(use_fake_ai):

@@ -9,6 +9,8 @@ from services.cache import cache_get, cache_set, market_cache_table
 from config.market_calendar import FOMC_DATES, BOJ_DATES, warn_if_missing
 from services.clock import today_jst
 from services.market_data import drop_empty_rows
+from services.openai_params import openai_limit_params
+from config.ai_models import OPENAI_ANALYSIS_MODEL
 
 
 router = APIRouter()
@@ -398,13 +400,14 @@ async def sector_comment(request: Request):
 """
     try:
         res = openai_client.chat.completions.create(
-            model="gpt-4o",
+            model=OPENAI_ANALYSIS_MODEL,
             messages=[
                 {"role": "system", "content": "あなたは株式市場のアナリストです。簡潔に日本語で答えてください。"},
                 {"role": "user", "content": prompt}
             ],
-            max_tokens=300,
+            **openai_limit_params(OPENAI_ANALYSIS_MODEL, 300),
         )
         return {"comment": res.choices[0].message.content.strip()}
     except Exception as e:
+        print(f"市況コメントのAIエラー: {e}")
         return {"comment": "解説を取得できませんでした。"}
