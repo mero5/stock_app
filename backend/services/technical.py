@@ -7,6 +7,7 @@ from services.cache import (
     cache_get, cache_set,
     market_cache_table, stock_cache_table
 )
+from services.market_data import drop_empty_rows
 import math
 
 
@@ -39,7 +40,7 @@ def get_latest_price(ticker_code: str):
     """直近終値を取得"""
     try:
         t = yf.Ticker(ticker_code)
-        hist = t.history(period="3d")
+        hist = drop_empty_rows(t.history(period="5d"))
         if not hist.empty:
             return round(float(hist["Close"].iloc[-1]), 2)
     except:
@@ -54,7 +55,7 @@ def get_trend_label(ticker_code: str, period: str = "5d") -> str:
     """
     try:
         t = yf.Ticker(ticker_code)
-        hist = t.history(period=period)
+        hist = drop_empty_rows(t.history(period=period))
         if len(hist) >= 2:
             pct = (
                 float(hist["Close"].iloc[-1]) - float(hist["Close"].iloc[0])
@@ -126,8 +127,10 @@ def get_nikkei225_breadth() -> dict:
         "6503.T", "7733.T", "4568.T", "6971.T", "9020.T",
     ]
     try:
-        data = yf.download(nikkei_sample, period="3d", progress=False)
-        close = data["Close"]
+        data = yf.download(nikkei_sample, period="5d", progress=False)
+        # 最新日が空（NaN）の銘柄があると前日比が計算できないので、
+        # 1銘柄でも空の日は除き、全銘柄がそろっている直近の2日で比べる
+        close = data["Close"].dropna(how="any")
         change = close.pct_change().iloc[-1]
         advancers = int((change > 0).sum())
         decliners = int((change < 0).sum())
@@ -162,7 +165,7 @@ def get_technical_data(ticker_code: str) -> dict:
     print(f"テクニカル {ticker_code}: yfinanceから計算")
     try:
         t = yf.Ticker(ticker_code)
-        hist = t.history(period="6mo")
+        hist = drop_empty_rows(t.history(period="6mo"))
         if len(hist) < 30:
             return {}
 
@@ -570,9 +573,10 @@ def get_earnings_alert(earnings_date_str: str, period: str, period_days=None) ->
         }
 
     try:
-        from datetime import datetime, date
+        from datetime import datetime
+        from services.clock import today_jst
         earnings_date = datetime.strptime(earnings_date_str, "%Y-%m-%d").date()
-        today         = date.today()
+        today         = today_jst()
         days_to       = (earnings_date - today).days
 
         if days_to < 0:

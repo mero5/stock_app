@@ -17,6 +17,7 @@ import 'package:http/http.dart' as http;
 import '../models/stock.dart';
 import '../services/stock_service.dart';
 import '../services/watchlist_service.dart';
+import '../services/session_guard.dart';
 import '../config/constants.dart';
 
 class HomeViewModel extends ChangeNotifier {
@@ -105,6 +106,14 @@ class HomeViewModel extends ChangeNotifier {
     isLoading = true;
     notifyListeners();
 
+    // セッションが切れていたらログイン画面へ戻して中断する
+    // （切れたまま取得すると失敗して、空のリストが表示されるだけになるため）
+    if (await SessionGuard.checkAndHandle()) {
+      isLoading = false;
+      notifyListeners();
+      return;
+    }
+
     try {
       // DynamoDBから銘柄コードの一覧を取得
       final codes = await WatchlistService.getCodes();
@@ -118,6 +127,8 @@ class HomeViewModel extends ChangeNotifier {
       watchList = stocks;
     } catch (e) {
       debugPrint('ウォッチリスト取得エラー: $e');
+      // 認証切れが原因ならログイン画面へ戻す
+      SessionGuard.handleAuthError(e);
     } finally {
       // 成功・失敗どちらでもローディングを終了
       isLoading = false;
@@ -134,6 +145,18 @@ class HomeViewModel extends ChangeNotifier {
   void toggleEditMode() {
     editMode = !editMode;
     selectedCodes = []; // 編集モード終了時は選択状態をリセット
+    notifyListeners();
+  }
+
+  /// 編集モードを終了する（すでにOFFなら何もしない）
+  ///
+  /// タブ切り替え・銘柄追加画面への遷移時に呼ぶ。
+  /// 以前はここで toggleEditMode() を呼んでいたため、
+  /// 編集モードOFFの状態でタブを切り替えると逆にONになっていた。
+  void exitEditMode() {
+    if (!editMode && selectedCodes.isEmpty) return;
+    editMode = false;
+    selectedCodes = [];
     notifyListeners();
   }
 
