@@ -1,0 +1,5 @@
+# 単体テスト用（本番の Lambda には入れない）
+# 使い方：cd backend && pip install -r requirements-dev.txt && pytest
+-r requirements-lambda.txt
+pytest
+httpx
