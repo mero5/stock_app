@@ -1,0 +1,84 @@
+# ===================================================
+# 単体テストの自動実行（GitHub Actions）
+#
+# 動くタイミング：
+#   ・PR の作成・更新（ブランチに push するたび）
+#   ・main への push（マージ後に main が壊れていないかの確認）
+#   ・手動（Actions 画面の「Run workflow」）
+#
+# 中身：
+#   ・backend … pytest（backend/tests/）
+#   ・flutter … flutter analyze（エラーのみで失敗）＋ flutter test（test/）
+#
+# お金について：
+#   ・このリポジトリは Public なので GitHub Actions は無料
+#   ・OpenAI・DynamoDB・株価API は呼ばない（テストでは偽物に差し替えている）
+#     → Secrets（APIキー）も不要。何回流しても0円
+#
+# 画面・本番APIを通した確認は、別リポジトリ stock-app-e2e の E2E テストで行う。
+# ===================================================
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# 同じブランチで連続 push したら、古い方の実行は止める
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: backend（pytest）
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"   # Lambda（public.ecr.aws/lambda/python:3.12）と同じ
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/requirements-lambda.txt
+            backend/requirements-dev.txt
+
+      - name: ライブラリをインストール
+        run: pip install -r requirements-dev.txt
+
+      - name: 単体テスト
+        run: pytest
+
+  flutter:
+    name: flutter（analyze・test）
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.41.2   # 開発環境と同じバージョン
+          cache: true
+
+      - name: パッケージを取得
+        run: flutter pub get
+
+      # 既存コードに warning / info が100件以上あるため、今は error だけで失敗させる。
+      # warning を減らせたら --no-fatal-warnings を外して厳しくする。
+      - name: 静的解析（flutter analyze）
+        run: flutter analyze --no-fatal-infos --no-fatal-warnings
+
+      - name: 単体テスト（flutter test）
+        run: flutter test
