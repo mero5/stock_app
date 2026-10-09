@@ -77,6 +77,32 @@ class AuthService {
     }
   }
 
+  /// ログイン済みなのにセッションが期限切れになっているかを確認する
+  ///
+  /// hasValidSession() との違い：
+  /// ・未ログイン（サインアウト済み）の場合は false を返す
+  ///   → ログイン画面にいるときに「期限切れ」ポップアップを出さないため
+  /// ・通信エラー等で判断できない場合も false を返す
+  ///   → 圏外で誤ってログアウトさせないため
+  ///
+  /// リフレッシュトークンが切れていると、ここで SessionExpiredException が
+  /// throw される（fetchAuthSession がトークンの更新を試みて失敗するため）。
+  ///
+  /// 返り値：期限切れならtrue
+  static Future<bool> isSessionExpired() async {
+    try {
+      final session = await Amplify.Auth.fetchAuthSession();
+      if (!session.isSignedIn) return false;
+      (session as CognitoAuthSession).userPoolTokensResult.value;
+      return false;
+    } on SessionExpiredException {
+      return true;
+    } catch (e) {
+      debugPrint('セッション期限確認エラー: $e');
+      return false;
+    }
+  }
+
   // ============================================================
   // 新規登録
   // ============================================================
