@@ -148,6 +148,18 @@ class HomeViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 編集モードを終了する（すでにOFFなら何もしない）
+  ///
+  /// タブ切り替え・銘柄追加画面への遷移時に呼ぶ。
+  /// 以前はここで toggleEditMode() を呼んでいたため、
+  /// 編集モードOFFの状態でタブを切り替えると逆にONになっていた。
+  void exitEditMode() {
+    if (!editMode && selectedCodes.isEmpty) return;
+    editMode = false;
+    selectedCodes = [];
+    notifyListeners();
+  }
+
   /// 銘柄の選択状態を切り替える
   /// すでに選択済みなら解除、未選択なら選択する
   void toggleSelect(String code) {
