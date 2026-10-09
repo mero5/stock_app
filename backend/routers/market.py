@@ -6,6 +6,7 @@ import exchange_calendars as xcals
 from fastapi import APIRouter, Request
 from services.technical import get_nikkei225_breadth
 from services.cache import cache_get, cache_set, market_cache_table
+from config.market_calendar import FOMC_DATES, BOJ_DATES, warn_if_missing
 from services.clock import today_jst
 from services.market_data import drop_empty_rows
 
@@ -154,15 +155,10 @@ def get_market_events(year: int, month: int):
         "color": "indigo",
     })
 
-    # ── FOMC（固定データ・年1回更新） ──
-    fomc = {
-        "2025-01-29", "2025-03-19", "2025-05-07", "2025-06-18",
-        "2025-07-30", "2025-09-17", "2025-10-29", "2025-12-10",
-        "2026-01-28", "2026-03-18", "2026-04-29", "2026-06-17",
-        "2026-07-29", "2026-09-16", "2026-10-28", "2026-12-09",
-    }
+    # ── FOMC（固定データ・年1回更新 → config/market_calendar.py） ──
+    warn_if_missing(year)
     prefix = f"{year}-{str(month).zfill(2)}"
-    for date_str in fomc:
+    for date_str in FOMC_DATES:
         if date_str.startswith(prefix):
             results.append({
                 "date": date_str,
@@ -171,14 +167,8 @@ def get_market_events(year: int, month: int):
                 "color": "purple",
             })
 
-    # ── 日銀金融政策決定会合（固定データ・年1回更新） ──
-    boj = {
-        "2025-01-24", "2025-03-19", "2025-05-01", "2025-06-17",
-        "2025-07-31", "2025-09-19", "2025-10-29", "2025-12-19",
-        "2026-01-23", "2026-03-19", "2026-04-28", "2026-06-16",
-        "2026-07-30", "2026-09-17", "2026-10-28", "2026-12-18",
-    }
-    for date_str in boj:
+    # ── 日銀金融政策決定会合（固定データ・年1回更新 → config/market_calendar.py） ──
+    for date_str in BOJ_DATES:
         if date_str.startswith(prefix):
             results.append({
                 "date": date_str,
