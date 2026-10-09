@@ -181,10 +181,19 @@ class HomeViewModel extends ChangeNotifier {
   /// 1. 選択中の各コードをDynamoDBから削除
   /// 2. 選択状態・編集モードをリセット
   /// 3. ウォッチリストを再取得して画面を更新
-  Future<void> deleteSelected() async {
+  ///
+  /// 削除に失敗した銘柄があれば、そのエラーを返す（画面側でポップアップを出す）。
+  /// 1件失敗しても残りの削除は続ける。全部成功したら null。
+  Future<Object?> deleteSelected() async {
+    Object? failure;
     // 選択中の銘柄を順番に削除
     for (final code in selectedCodes) {
-      await WatchlistService.delete(code);
+      try {
+        await WatchlistService.delete(code);
+      } catch (e) {
+        debugPrint('ウォッチリスト削除エラー $code: $e');
+        failure ??= e;
+      }
     }
 
     // 削除後は選択状態と編集モードをリセット
@@ -194,5 +203,6 @@ class HomeViewModel extends ChangeNotifier {
 
     // ウォッチリストを再取得して画面を更新
     await loadFavorites();
+    return failure;
   }
 }
