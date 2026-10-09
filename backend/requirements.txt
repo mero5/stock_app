@@ -1,7 +1,16 @@
+# バックエンドが import しているライブラリはすべてここに書く
+# （以前は一部しか書かれておらず、EC2の venv に手で入れたものが動いていただけだった）
 fastapi
 uvicorn[standard]
-yfinance
 requests
+python-dotenv
+yfinance
+pandas
+numpy
+boto3
+openai
+google-generativeai
+google-api-python-client
 ephem
 jpholiday
 exchange-calendars
