@@ -513,8 +513,8 @@ class _HomeScreenState extends State<HomeScreen> {
               icon: const Icon(Icons.add),
               tooltip: '銘柄を追加',
               onPressed: () async {
-                // 編集モードをリセット
-                context.read<HomeViewModel>().toggleEditMode();
+                // 編集モードを終了する
+                context.read<HomeViewModel>().exitEditMode();
                 await Navigator.push(
                   context,
                   MaterialPageRoute(
@@ -602,8 +602,8 @@ class _HomeScreenState extends State<HomeScreen> {
           setState(() {
             _currentIndex = index;
           });
-          // タブ切り替え時は編集モードをリセット
-          context.read<HomeViewModel>().toggleEditMode();
+          // タブ切り替え時は編集モードを終了する
+          context.read<HomeViewModel>().exitEditMode();
         },
         items: const [
           BottomNavigationBarItem(icon: Icon(Icons.home), label: 'ホーム'),

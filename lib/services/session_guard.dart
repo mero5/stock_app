@@ -11,6 +11,16 @@
 // （トークンのrefreshに失敗しても、保持している古いトークンがnullでないため）
 // そのため isSignedIn だけでログイン状態を判定してはいけない。
 // 起動時の判定には AuthService.hasValidSession() を使うこと。
+//
+// 【重要】Hubの sessionExpired だけでは期限切れを検知できない。
+// このイベントは fetchAuthSession() がトークン更新に失敗したときにしか流れないが、
+// バックエンドAPIはトークンを使わないため、普段の操作では
+// fetchAuthSession() が呼ばれず、イベントが一度も流れないことがある。
+// （その結果、期限切れのままホーム画面に留まり、ウォッチリストが空になっていた）
+// そのため以下のタイミングでも能動的に確認する：
+//   ・アプリがバックグラウンドから復帰したとき（didChangeAppLifecycleState）
+//   ・ウォッチリストを読み込む前（HomeViewModel.loadFavorites）
+//   ・認証系の例外を受け取ったとき（handleAuthError）
 // ============================================================
 
 import 'package:flutter/material.dart';
@@ -39,6 +49,35 @@ class SessionGuard {
         handleExpired();
       }
     });
+    // バックグラウンドからの復帰時にも期限切れを確認する
+    WidgetsBinding.instance.addObserver(_LifecycleObserver());
+  }
+
+  /// 期限切れかどうかを確認し、切れていればログイン画面へ戻す
+  ///
+  /// 返り値：期限切れだった（＝ログイン画面へ戻す処理を始めた）ならtrue。
+  /// 呼び出し側はtrueのとき、以降の処理（API呼び出し等）を中断すること。
+  static Future<bool> checkAndHandle() async {
+    if (_isHandling) return true;
+    final expired = await AuthService.isSessionExpired();
+    if (expired) handleExpired();
+    return expired;
+  }
+
+  /// 例外が認証切れによるものならログイン画面へ戻す
+  ///
+  /// Amplify.Auth.getCurrentUser() などはセッション切れのとき
+  /// SessionExpiredException / SignedOutException を投げる。
+  /// これを握り潰すと「データが表示されないだけ」の状態になるため、
+  /// catch した箇所でこのメソッドに渡す。
+  ///
+  /// 返り値：認証切れとして処理したならtrue
+  static bool handleAuthError(Object e) {
+    if (e is SessionExpiredException || e is SignedOutException) {
+      handleExpired();
+      return true;
+    }
+    return false;
   }
 
   /// 期限切れを処理する（ポップアップ → ログアウト → ログイン画面）
@@ -114,5 +153,19 @@ class SessionGuard {
       );
       _isHandling = false;
     });
+  }
+}
+
+/// アプリのライフサイクル（前面／背面）を監視する
+///
+/// アプリを長時間バックグラウンドに置いている間にリフレッシュトークンが
+/// 切れることがある。復帰したタイミングで確認して、切れていれば
+/// ログイン画面へ戻す。
+class _LifecycleObserver with WidgetsBindingObserver {
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      SessionGuard.checkAndHandle();
+    }
   }
 }

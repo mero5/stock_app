@@ -5,6 +5,7 @@ import yfinance as yf
 from fastapi import APIRouter
 from services.cache import stock_cache_table, cache_get, cache_set
 from config.timeouts import JQUANTS_TIMEOUT
+from services.market_data import drop_empty_rows
 
 
 # main.pyから注入される変数
@@ -120,7 +121,7 @@ def get_stock_detail(code: str):
         info = ticker.info
 
         # 3ヶ月分の株価履歴を取得
-        hist = ticker.history(period="3mo")
+        hist = drop_empty_rows(ticker.history(period="3mo"))
 
         # ローソク足データを整形
         candles = []
@@ -276,7 +277,8 @@ def get_stock_price(code: str):
         else:
             ticker = yf.Ticker(code)
 
-        hist = ticker.history(period="2d")
+        # 最新日が空の行で返ることがあるので、余裕を持って5日分取ってから空の行を除く
+        hist = drop_empty_rows(ticker.history(period="5d"))
         if not hist.empty:
             price = round(float(hist["Close"].iloc[-1]), 2)
             if len(hist) >= 2:
