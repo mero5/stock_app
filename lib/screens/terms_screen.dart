@@ -19,7 +19,10 @@
 
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../services/auth_service.dart';
+import '../services/user_profile_service.dart';
 import 'home_screen.dart';
+import 'profile_setup_screen.dart';
 
 class TermsScreen extends StatefulWidget {
   const TermsScreen({super.key});
@@ -62,10 +65,17 @@ class _TermsScreenState extends State<TermsScreen> {
   // アクション
   // ============================================================
 
-  /// 全項目に同意してHomeScreenへ遷移する
+  /// 全項目に同意して次の画面へ遷移する
   ///
   /// SharedPreferencesに同意済みフラグを保存することで
   /// 次回起動時にこの画面をスキップする。
+  ///
+  /// 遷移先はログイン画面と同じ判定にする：
+  /// ・プロファイル未登録 → ProfileSetupScreen（初回設定）
+  /// ・登録済み           → HomeScreen
+  /// 以前は常にHomeScreenへ遷移していたため、初回ユーザーが
+  /// プロファイル設定を通らずにホームに入り、2回目のログインで
+  /// 初めて設定画面が出ていた。
   Future<void> _agree() async {
     if (!_allChecked) return;
 
@@ -75,13 +85,23 @@ class _TermsScreenState extends State<TermsScreen> {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('terms_agreed', true);
 
-    if (mounted) {
-      // HomeScreenに遷移（戻れないようにpushReplacementを使う）
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(builder: (_) => const HomeScreen()),
-      );
-    }
+    // プロファイルの有無で遷移先を決める
+    final userId = await AuthService.getUserId();
+    final profile = userId == null
+        ? null
+        : await UserProfileService.getProfile(userId);
+    if (!mounted) return;
+
+    // 戻れないようにpushReplacementを使う
+    // userIdが取れない場合（通信エラー等）は従来どおりHomeScreenへ
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(
+        builder: (_) => (userId != null && profile == null)
+            ? ProfileSetupScreen(userId: userId)
+            : const HomeScreen(),
+      ),
+    );
   }
 
   // ============================================================
