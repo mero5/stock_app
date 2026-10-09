@@ -6,6 +6,7 @@ from fastapi import APIRouter, Request
 from openai import OpenAI
 import yfinance as yf
 import google.generativeai as genai
+from config.timeouts import GEMINI_TIMEOUT_SEC
 from services.technical import (
     get_technical_data, get_fundamental_data,
     get_macro_data, get_nikkei225_breadth,
@@ -15,6 +16,7 @@ from services.technical import (
     resolve_sector_trend, normalize_checks, PROMPT_VERSION
 )
 from services.predictions import save_prediction, resolve_horizon_days
+from services.market_data import drop_empty_rows
 import math
 from fastapi.responses import JSONResponse
 
@@ -89,7 +91,8 @@ def error_response(payload: dict) -> Response:
     )
 
 
-def call_openai_json(prompt: str, system: str, max_tokens: int = 4000):
+def call_openai_json(prompt: str, system: str, max_tokens: int = 4000,
+                     model: str = "gpt-4o"):
     """
     OpenAIを呼んでJSONを取得する共通処理。
 
@@ -101,7 +104,7 @@ def call_openai_json(prompt: str, system: str, max_tokens: int = 4000):
     使用量は予測記録に残して実コストを追えるようにする。
     """
     res = openai_client.chat.completions.create(
-        model="gpt-4o",
+        model=model,
         messages=[
             {"role": "system", "content": system},
             {"role": "user",   "content": prompt},
@@ -140,7 +143,7 @@ async def get_ai_analysis(code: str):
             ticker = yf.Ticker(code)
 
         info = ticker.info
-        hist = ticker.history(period="3mo")
+        hist = drop_empty_rows(ticker.history(period="3mo"))
         raw_news = ticker.news[:5] if ticker.news else []
 
         # ── ニュース整形 ──
@@ -241,16 +244,18 @@ async def get_ai_analysis(code: str):
         ema26 = ema(closes, 26)
         macd  = round(ema12 - ema26, 2) if ema12 and ema26 else None
 
+        # RSI（ワイルダー方式。/stock/detail・AI診断と同じ計算）
+        # 以前は直近14日の単純平均で計算していて、画面ごとに値が違っていた
         rsi = None
-        if len(closes) >= 15:
-            period = 14
-            gains, losses = [], []
-            for i in range(1, period + 1):
-                diff = closes[-period - 1 + i] - closes[-period - 2 + i]
-                gains.append(max(diff, 0))
-                losses.append(max(-diff, 0))
-            avg_gain = sum(gains) / period
-            avg_loss = sum(losses) / period
+        period = 14
+        if len(closes) >= period + 1:
+            gains  = [max(closes[i] - closes[i - 1], 0) for i in range(1, len(closes))]
+            losses = [max(closes[i - 1] - closes[i], 0) for i in range(1, len(closes))]
+            avg_gain = sum(gains[:period]) / period
+            avg_loss = sum(losses[:period]) / period
+            for g, l in zip(gains[period:], losses[period:]):
+                avg_gain = (avg_gain * (period - 1) + g) / period
+                avg_loss = (avg_loss * (period - 1) + l) / period
             if avg_loss != 0:
                 rsi = round(100 - (100 / (1 + avg_gain / avg_loss)), 1)
             else:
@@ -305,7 +310,8 @@ ROE: {roe}
 
         model = genai.GenerativeModel("gemini-2.5-flash")
         response = model.generate_content(
-            [{"role": "user", "parts": [{"text": prompt}]}]
+            [{"role": "user", "parts": [{"text": prompt}]}],
+            request_options={"timeout": GEMINI_TIMEOUT_SEC},
         )
         raw = response.text.strip()
         raw = raw.replace("```json", "").replace("```", "").strip()
@@ -399,18 +405,25 @@ PER: {per}倍 / PBR: {pbr}倍 / ROE: {roe}
 }}
 """
 
+    # call_openai_json を使い、JSONモード（JSON以外を返させない）と
+    # max_tokens 切れの検出を AI診断と共通にする。
+    # 以前は素の呼び出しで、AIが前置き文や途中で切れたJSONを返すと
+    # json.loads が失敗して「予期せぬエラー」になっていた。
     try:
-        res = openai_client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": "あなたは日本株・米国株に詳しい投資アドバイザーです。必ずJSON形式のみで返してください。"},
-                {"role": "user",   "content": prompt}
-            ],
+        result, _usage = call_openai_json(
+            prompt,
+            system="あなたは日本株・米国株に詳しい投資アドバイザーです。必ずJSON形式のみで返してください。",
             max_tokens=3000,
+            model="gpt-4o-mini",
         )
-        raw = res.choices[0].message.content.strip()
-        raw = raw.replace("```json", "").replace("```", "").strip()
-        return json.loads(raw)
+        return result
+    except json.JSONDecodeError as e:
+        print(f"AI相談 JSONパースエラー: {e}")
+        return {
+            "error": "AI分析結果の解析に失敗しました。もう一度お試しください。",
+            "error_detail": f"JSONパースエラー: {str(e)}",
+            "error_type": "parse_error",
+        }
     except Exception as e:
         print(f"AI相談エラー: {e}")
         return classify_error(e)
@@ -758,7 +771,7 @@ JSONのみ出力（前置き・説明文禁止）。
 - ドル円：{macro.get('usd_jpy')}円
 - 米10年債：{macro.get('us10y')}%
 - S&P500トレンド：{macro.get('sp500_trend')}
-- 金利差(10Y-2Y)：{macro.get('yield_spread')}
+- 金利差(10Y-3M)：{macro.get('yield_spread')}
 
 【診断期間】中期（1〜3ヶ月）
 
@@ -791,7 +804,7 @@ JSONのみ出力（前置き・説明文禁止）。
 - 日経平均トレンド：{macro.get('nikkei_trend')}
 - 米10年債：{macro.get('us10y')}%（金利環境）
 - ドル円：{macro.get('usd_jpy')}円
-- 金利差(10Y-2Y)：{macro.get('yield_spread')}（景気後退シグナル）
+- 金利差(10Y-3M)：{macro.get('yield_spread')}（景気後退シグナル）
 
 【診断期間】長期（6ヶ月以上）
 

@@ -3,6 +3,10 @@ setlocal enabledelayedexpansion
 
 REM ============================================================
 REM  stock_app backend deploy script
+REM
+REM  *** LEGACY: EC2 ONLY ***
+REM  The backend moved to AWS Lambda on 2026-10-09 (PR #1).
+REM  Do not use this script for normal deploys. See DEPLOY.md.
 REM  See DEPLOY.md for the Japanese explanation.
 REM
 REM  NOTE: keep this file ASCII-only.

@@ -6,6 +6,9 @@ import exchange_calendars as xcals
 from fastapi import APIRouter, Request
 from services.technical import get_nikkei225_breadth
 from services.cache import cache_get, cache_set, market_cache_table
+from config.market_calendar import FOMC_DATES, BOJ_DATES, warn_if_missing
+from services.clock import today_jst
+from services.market_data import drop_empty_rows
 
 
 router = APIRouter()
@@ -152,15 +155,10 @@ def get_market_events(year: int, month: int):
         "color": "indigo",
     })
 
-    # ── FOMC（固定データ・年1回更新） ──
-    fomc = {
-        "2025-01-29", "2025-03-19", "2025-05-07", "2025-06-18",
-        "2025-07-30", "2025-09-17", "2025-10-29", "2025-12-10",
-        "2026-01-28", "2026-03-18", "2026-04-29", "2026-06-17",
-        "2026-07-29", "2026-09-16", "2026-10-28", "2026-12-09",
-    }
+    # ── FOMC（固定データ・年1回更新 → config/market_calendar.py） ──
+    warn_if_missing(year)
     prefix = f"{year}-{str(month).zfill(2)}"
-    for date_str in fomc:
+    for date_str in FOMC_DATES:
         if date_str.startswith(prefix):
             results.append({
                 "date": date_str,
@@ -169,14 +167,8 @@ def get_market_events(year: int, month: int):
                 "color": "purple",
             })
 
-    # ── 日銀金融政策決定会合（固定データ・年1回更新） ──
-    boj = {
-        "2025-01-24", "2025-03-19", "2025-05-01", "2025-06-17",
-        "2025-07-31", "2025-09-19", "2025-10-29", "2025-12-19",
-        "2026-01-23", "2026-03-19", "2026-04-28", "2026-06-16",
-        "2026-07-30", "2026-09-17", "2026-10-28", "2026-12-18",
-    }
-    for date_str in boj:
+    # ── 日銀金融政策決定会合（固定データ・年1回更新 → config/market_calendar.py） ──
+    for date_str in BOJ_DATES:
         if date_str.startswith(prefix):
             results.append({
                 "date": date_str,
@@ -205,7 +197,7 @@ def get_upcoming_events(months: int = 6):
     import datetime
 
     months = max(1, min(int(months or 6), 12))
-    today = datetime.date.today()
+    today = today_jst()
     cache_key = {'cache_key': f'upcoming_{months}_{today}'}
 
     cached = cache_get(market_cache_table, cache_key)
@@ -248,7 +240,7 @@ def get_nikkei_monthly(year: int, month: int):
         start = datetime.date(year, month, 1) - datetime.timedelta(days=5)
         end   = datetime.date(year, month + 1, 1) if month < 12 \
                 else datetime.date(year + 1, 1, 1)
-        hist  = ticker.history(start=str(start), end=str(end))
+        hist  = drop_empty_rows(ticker.history(start=str(start), end=str(end)))
 
         result = {}
         prev_close = None
@@ -280,8 +272,19 @@ def get_nikkei_monthly(year: int, month: int):
 def get_sector_trends(period: str = "5d"):
     """
     日本・米国の主要セクターETFの騰落を取得して返す
+
+    29本のETFを1本ずつyfinanceから取得するので重い（数秒〜十数秒）。
+    しかもアプリはAI診断・ポートフォリオ診断のたびにこのAPIを呼ぶので、
+    15分キャッシュする（騰落率は15分程度の遅れで十分）。
     """
     import datetime
+
+    period = "1mo" if period == "1mo" else "5d"
+    cache_key = {'cache_key': f'sectors_{period}'}
+    cached = cache_get(market_cache_table, cache_key)
+    if cached and isinstance(cached.get("jp"), list):
+        print(f"セクター: キャッシュヒット（{period}）")
+        return {"jp": cached["jp"], "us": cached.get("us", [])}
 
     # 日本セクターETF（東証ETF）
     jp_sectors = {
@@ -325,7 +328,7 @@ def get_sector_trends(period: str = "5d"):
     for name, ticker_code in {**jp_sectors, **us_sectors}.items():
         try:
             ticker = yf.Ticker(ticker_code)
-            hist = ticker.history(period="1mo" if period == "1mo" else "6d")
+            hist = drop_empty_rows(ticker.history(period="1mo" if period == "1mo" else "6d"))
             if len(hist) < 2:
                 continue
             prev  = float(hist["Close"].iloc[-2])
@@ -359,6 +362,9 @@ def get_sector_trends(period: str = "5d"):
     result["jp"].sort(key=lambda x: x["change_pct"], reverse=True)
     result["us"].sort(key=lambda x: x["change_pct"], reverse=True)
 
+    # 1本も取れなかった（yfinance障害など）ときは、空の結果をキャッシュしない
+    if result["jp"] or result["us"]:
+        cache_set(market_cache_table, cache_key, result, ttl_minutes=15)
     return result
 
 

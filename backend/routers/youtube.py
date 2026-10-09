@@ -3,6 +3,7 @@ import json
 from fastapi import APIRouter, Request
 from googleapiclient.discovery import build
 import google.generativeai as genai
+from config.timeouts import GEMINI_TIMEOUT_SEC
 from services.cache import cache_get, cache_set, market_cache_table
 
 router = APIRouter()
@@ -69,7 +70,8 @@ async def summarize_video(request: Request):
     try:
         model    = genai.GenerativeModel("gemini-2.5-flash")
         response = model.generate_content(
-            [{"role": "user", "parts": [{"text": prompt}]}]
+            [{"role": "user", "parts": [{"text": prompt}]}],
+            request_options={"timeout": GEMINI_TIMEOUT_SEC},
         )
         raw    = response.text.strip().replace("```json", "").replace("```", "").strip()
         parsed = json.loads(raw)
@@ -95,23 +97,58 @@ def get_summaries(channel_ids: str):
     return []
 
 
+def _uploads_playlist_id(youtube, channel_id: str) -> str:
+    """
+    チャンネルの「アップロード動画」プレイリストIDを返す。
+
+    channels.list（1ユニット）で取得する。取れなかった場合は、
+    チャンネルID「UCxxxx」の先頭を「UU」に変えたもの（YouTubeの決まった形式）を使う。
+    """
+    try:
+        res = youtube.channels().list(id=channel_id, part="contentDetails").execute()
+        items = res.get("items", [])
+        if items:
+            return items[0]["contentDetails"]["relatedPlaylists"]["uploads"]
+    except Exception as e:
+        print(f"アップロードプレイリスト取得エラー: {e}")
+    return "UU" + channel_id[2:] if channel_id.startswith("UC") else channel_id
+
+
 @router.get("/channels/{channel_id}/videos")
 def get_channel_videos(channel_id: str, max_results: int = 10):
+    """
+    チャンネルの最新動画を返す。
+
+    以前は search.list（1回100ユニット）を使っていたため、
+    YouTube Data API の無料枠（1日10,000ユニット）を約100回で使い切っていた。
+    アップロード動画のプレイリストを playlistItems.list（1ユニット）で読む方式に変更し、
+    1回あたり2ユニット（channels.list + playlistItems.list）で済むようにした。
+    """
     try:
         youtube = build("youtube", "v3", developerKey=YOUTUBE_API_KEY)
-        res = youtube.search().list(
-            channelId=channel_id, part="snippet",
-            order="date", maxResults=max_results, type="video",
+        playlist_id = _uploads_playlist_id(youtube, channel_id)
+        res = youtube.playlistItems().list(
+            playlistId=playlist_id, part="snippet",
+            maxResults=max(1, min(int(max_results), 50)),
         ).execute()
         videos = []
         for item in res.get("items", []):
+            snippet = item.get("snippet", {})
+            video_id = (snippet.get("resourceId") or {}).get("videoId")
+            thumbs = snippet.get("thumbnails") or {}
+            # 非公開・削除済みの動画はサムネイルが無いので除外する
+            thumb = (thumbs.get("medium") or thumbs.get("default") or {}).get("url")
+            if not video_id or not thumb:
+                continue
             videos.append({
-                "video_id":     item["id"]["videoId"],
-                "title":        item["snippet"]["title"],
-                "published_at": item["snippet"]["publishedAt"],
-                "thumbnail":    item["snippet"]["thumbnails"]["medium"]["url"],
-                "description":  item["snippet"]["description"],
+                "video_id":     video_id,
+                "title":        snippet.get("title", ""),
+                "published_at": snippet.get("publishedAt", ""),
+                "thumbnail":    thumb,
+                "description":  snippet.get("description", ""),
             })
+        # プレイリストは基本的に新しい順だが、念のため投稿日時で並べ直す
+        videos.sort(key=lambda v: v["published_at"], reverse=True)
         return {"videos": videos}
     except Exception as e:
         return {"error": str(e), "videos": []}

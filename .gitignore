@@ -50,3 +50,6 @@ lib/amplifyconfiguration.dart
 # 環境変数（APIキー）
 backend/.env
 .env
+
+# Claude Code のローカル専用メモ（IPアドレス・鍵の場所など公開しない情報）
+CLAUDE.local.md

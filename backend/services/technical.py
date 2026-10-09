@@ -7,6 +7,7 @@ from services.cache import (
     cache_get, cache_set,
     market_cache_table, stock_cache_table
 )
+from services.market_data import drop_empty_rows
 import math
 
 
@@ -39,7 +40,7 @@ def get_latest_price(ticker_code: str):
     """直近終値を取得"""
     try:
         t = yf.Ticker(ticker_code)
-        hist = t.history(period="3d")
+        hist = drop_empty_rows(t.history(period="5d"))
         if not hist.empty:
             return round(float(hist["Close"].iloc[-1]), 2)
     except:
@@ -54,7 +55,7 @@ def get_trend_label(ticker_code: str, period: str = "5d") -> str:
     """
     try:
         t = yf.Ticker(ticker_code)
-        hist = t.history(period=period)
+        hist = drop_empty_rows(t.history(period=period))
         if len(hist) >= 2:
             pct = (
                 float(hist["Close"].iloc[-1]) - float(hist["Close"].iloc[0])
@@ -75,7 +76,8 @@ def get_macro_data() -> dict:
     マクロ指標を一括取得（DynamoDBに15分キャッシュ）
     """
     # キャッシュ確認
-    cached = cache_get(market_cache_table, {'cache_key': 'macro'})
+    # キャッシュキーは項目名を変えたときに v を上げる（古い形のデータを読まないため）
+    cached = cache_get(market_cache_table, {'cache_key': 'macro_v2'})
     if cached:
         print("マクロ: キャッシュヒット")
         return cached
@@ -84,7 +86,9 @@ def get_macro_data() -> dict:
     macro = {
         "vix":          get_latest_price("^VIX"),
         "us10y":        get_latest_price("^TNX"),
-        "us2y":         get_latest_price("^IRX"),
+        # ^IRX は米国債「13週（3ヶ月）」の利回り。以前は us2y（2年債）という名前で
+        # 渡していたため、AIに「2年債」と誤った説明をしていた
+        "us3m":         get_latest_price("^IRX"),
         "usd_jpy":      get_latest_price("USDJPY=X"),
         "dxy":          get_latest_price("DX-Y.NYB"),
         "oil_price":    get_latest_price("CL=F"),
@@ -93,15 +97,15 @@ def get_macro_data() -> dict:
         "sp500_trend":  get_trend_label("^GSPC"),
     }
 
-    # 金利差（逆イールド判定）
-    if macro["us2y"] and macro["us10y"]:
-        macro["yield_spread"] = round(macro["us10y"] - macro["us2y"], 3)
+    # 金利差（10年-3ヶ月。マイナス=逆イールド・景気後退シグナル）
+    if macro["us3m"] and macro["us10y"]:
+        macro["yield_spread"] = round(macro["us10y"] - macro["us3m"], 3)
     else:
         macro["yield_spread"] = None
 
     # 15分キャッシュ
     clean_macro = sanitize(macro)
-    cache_set(market_cache_table, {'cache_key': 'macro'}, clean_macro, ttl_minutes=15)
+    cache_set(market_cache_table, {'cache_key': 'macro_v2'}, clean_macro, ttl_minutes=15)
     return clean_macro
 
 
@@ -110,7 +114,8 @@ def get_nikkei225_breadth() -> dict:
     日経225の騰落レシオ・上昇下落銘柄数を計算（DynamoDBに8時間キャッシュ）
     """
     # キャッシュ確認
-    cached = cache_get(market_cache_table, {'cache_key': 'breadth'})
+    # v2: 比率を%表記（x100）に変更したのでキーを分ける
+    cached = cache_get(market_cache_table, {'cache_key': 'breadth_v2'})
     if cached:
         print("騰落レシオ: キャッシュヒット")
         return cached
@@ -126,12 +131,18 @@ def get_nikkei225_breadth() -> dict:
         "6503.T", "7733.T", "4568.T", "6971.T", "9020.T",
     ]
     try:
-        data = yf.download(nikkei_sample, period="3d", progress=False)
-        close = data["Close"]
+        data = yf.download(nikkei_sample, period="5d", progress=False)
+        # 最新日が空（NaN）の銘柄があると前日比が計算できないので、
+        # 1銘柄でも空の日は除き、全銘柄がそろっている直近の2日で比べる
+        close = data["Close"].dropna(how="any")
         change = close.pct_change().iloc[-1]
         advancers = int((change > 0).sum())
         decliners = int((change < 0).sum())
-        ratio = round(advancers / decliners, 2) if decliners > 0 else None
+        # %表記にする（例：上昇18・下落12 → 150.0）。
+        # 以前は 1.5 のような倍率のまま渡していたが、プロンプトでは
+        # 「120以上=過熱」と%の基準で説明していたため、AIが誤読していた。
+        # ※主要30銘柄・当日1日分の簡易値。一般的な「25日騰落レシオ」とは別物
+        ratio = round(advancers / decliners * 100, 1) if decliners > 0 else None
         result = {
             "advancers": advancers,
             "decliners": decliners,
@@ -139,7 +150,7 @@ def get_nikkei225_breadth() -> dict:
         }
         # 8時間キャッシュ（翌営業日まで有効）
         clean_result = sanitize(result)
-        cache_set(market_cache_table, {'cache_key': 'breadth'}, clean_result, ttl_minutes=480)
+        cache_set(market_cache_table, {'cache_key': 'breadth_v2'}, clean_result, ttl_minutes=480)
         return clean_result
     except:
         return {
@@ -162,7 +173,7 @@ def get_technical_data(ticker_code: str) -> dict:
     print(f"テクニカル {ticker_code}: yfinanceから計算")
     try:
         t = yf.Ticker(ticker_code)
-        hist = t.history(period="6mo")
+        hist = drop_empty_rows(t.history(period="6mo"))
         if len(hist) < 30:
             return {}
 
@@ -174,10 +185,12 @@ def get_technical_data(ticker_code: str) -> dict:
         ma25 = safe_float(close.rolling(25).mean().iloc[-1])
         ma75 = safe_float(close.rolling(75).mean().iloc[-1]) if len(close) >= 75 else None
 
-        # RSI
+        # RSI（ワイルダー方式。/stock/detail のチャート表示と同じ計算）
+        # 以前は単純移動平均で計算していたため、画面に出るRSIと
+        # AIに渡すRSIの値が食い違っていた
         delta = close.diff()
-        gain  = delta.clip(lower=0).rolling(14).mean()
-        loss  = (-delta.clip(upper=0)).rolling(14).mean()
+        gain  = delta.clip(lower=0).ewm(alpha=1/14, adjust=False, min_periods=14).mean()
+        loss  = (-delta.clip(upper=0)).ewm(alpha=1/14, adjust=False, min_periods=14).mean()
         rs    = gain / loss
         rsi   = safe_float(100 - (100 / (1 + rs.iloc[-1])))
 
@@ -570,9 +583,10 @@ def get_earnings_alert(earnings_date_str: str, period: str, period_days=None) ->
         }
 
     try:
-        from datetime import datetime, date
+        from datetime import datetime
+        from services.clock import today_jst
         earnings_date = datetime.strptime(earnings_date_str, "%Y-%m-%d").date()
-        today         = date.today()
+        today         = today_jst()
         days_to       = (earnings_date - today).days
 
         if days_to < 0:
@@ -643,7 +657,7 @@ def fmt(val, suffix="", null_str="データなし"):
 # 「改良前と改良後で的中率がどう変わったか」を比較できる。
 # ここを上げ忘れると改良の効果が測れなくなるので注意。
 # ===================================================
-PROMPT_VERSION = "v2-checks-profile-earnings"
+PROMPT_VERSION = "v3-indicator-fix"  # v3: 騰落レシオ%表記・3ヶ月債・RSIワイルダー・長期ルール修正
 
 
 # ===================================================
@@ -792,8 +806,9 @@ def build_short_prompt(name, code, tech, fund, macro, breadth,
   ※倍率高い=将来の売り圧力
 - 空売り比率：{fmt(macro.get('short_ratio'), '%')}
   ※高い=弱気筋が多い
-- 騰落レシオ：{fmt(breadth.get('advance_decline_ratio'))}
-  ※120以上=過熱感／70以下=売られすぎ
+- 騰落レシオ（簡易：主要30銘柄・当日）：{fmt(breadth.get('advance_decline_ratio'), '%')}
+  ※100超=上昇銘柄が多い／100未満=下落銘柄が多い
+  ※1日分の値なので振れが大きい。25日騰落レシオの基準（120以上=過熱等）は当てはめないこと
 - 上昇銘柄数：{fmt(breadth.get('advancers'))} / 下落銘柄数：{fmt(breadth.get('decliners'))}
 """, checks["supply"])
 
@@ -941,7 +956,8 @@ def build_medium_prompt(name, code, tech, fund, macro, breadth,
     supply_block = section("【需給・市場内部】", f"""
 - 信用倍率：{fmt(macro.get('margin_ratio'), '倍')}
 - 空売り比率：{fmt(macro.get('short_ratio'), '%')}
-- 騰落レシオ：{fmt(breadth.get('advance_decline_ratio'))}
+- 騰落レシオ（簡易：主要30銘柄・当日）：{fmt(breadth.get('advance_decline_ratio'), '%')}
+  ※100超=上昇銘柄が多い／100未満=下落銘柄が多い（1日分の値なので参考程度）
 - 上昇銘柄数：{fmt(breadth.get('advancers'))} / 下落銘柄数：{fmt(breadth.get('decliners'))}
 """, checks["supply"])
 
@@ -963,8 +979,8 @@ def build_medium_prompt(name, code, tech, fund, macro, breadth,
 - 日経平均トレンド：{fmt(macro.get('nikkei_trend'))}
 - VIX：{fmt(macro.get('vix'))}
 - 米10年債：{fmt(macro.get('us10y'), '%')}
-- 米2年債：{fmt(macro.get('us2y'), '%')}
-- 金利差（10年-2年）：{fmt(macro.get('yield_spread'), '%')}
+- 米3ヶ月債：{fmt(macro.get('us3m'), '%')}
+- 金利差（10年-3ヶ月）：{fmt(macro.get('yield_spread'), '%')}
   ※マイナス=逆イールド・景気後退シグナル
 - ドル円：{fmt(macro.get('usd_jpy'), '円')}
 - DXY：{fmt(macro.get('dxy'))}
@@ -1108,7 +1124,8 @@ def build_long_prompt(name, code, tech, fund, macro, breadth=None,
     supply_block = section("【需給・市場内部】", f"""
 - 信用倍率：{fmt(macro.get('margin_ratio'), '倍')}
 - 空売り比率：{fmt(macro.get('short_ratio'), '%')}
-- 騰落レシオ：{fmt(breadth.get('advance_decline_ratio'))}
+- 騰落レシオ（簡易：主要30銘柄・当日）：{fmt(breadth.get('advance_decline_ratio'), '%')}
+  ※100超=上昇銘柄が多い／100未満=下落銘柄が多い（1日分の値なので参考程度）
 - 上昇銘柄数：{fmt(breadth.get('advancers'))} / 下落銘柄数：{fmt(breadth.get('decliners'))}
 """, checks["supply"])
 
@@ -1125,8 +1142,8 @@ def build_long_prompt(name, code, tech, fund, macro, breadth=None,
 - 日経平均トレンド：{fmt(macro.get('nikkei_trend'))}
 - VIX：{fmt(macro.get('vix'))}
 - 米10年債：{fmt(macro.get('us10y'), '%')}
-- 米2年債：{fmt(macro.get('us2y'), '%')}
-- 金利差（10年-2年）：{fmt(macro.get('yield_spread'), '%')}
+- 米3ヶ月債：{fmt(macro.get('us3m'), '%')}
+- 金利差（10年-3ヶ月）：{fmt(macro.get('yield_spread'), '%')}
   ※マイナス=逆イールド・景気後退シグナル
 - ドル円：{fmt(macro.get('usd_jpy'), '円')}
 - DXY：{fmt(macro.get('dxy'))}
@@ -1149,8 +1166,8 @@ def build_long_prompt(name, code, tech, fund, macro, breadth=None,
 
 【最重要ルール】
 - RSI・MACDなど単一指標で結論を出してはいけない
-- 「今の相場で資金が入る銘柄か」を最優先に判断する
-- セクター強度と資金流入を必ず評価する
+- 業績の持続性・成長性・財務健全性を最優先に判断する（短期的な資金の出入りより優先）
+- セクターの中長期的な成長性と、金利・為替などマクロ環境を必ず評価する
 - 個別ではなく相対評価（強い/普通/弱い）で判断する
 
 【優先順位（ユーザー設定）】
@@ -1159,7 +1176,7 @@ def build_long_prompt(name, code, tech, fund, macro, breadth=None,
 【推定ルール（データが無い場合）】
 - セクター強度：ニュース、指数トレンド、マクロ（原油・金利・為替）から推定し、必ず「strong/neutral/weak」で評価する
 - 資金流入：出来高の増減（データがあれば）、なければ直近の値動きの強弱とニュースから「inflow/neutral/outflow」で推定する
-- トレンド：MA25を基準に「uptrend/downtrend/sideways」で必ず判定する
+- トレンド：MA75と6ヶ月モメンタムを基準に「uptrend/downtrend/sideways」で必ず判定する
 - 推定した場合は、必ず「推定」と明記すること
 
 【禁止】

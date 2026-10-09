@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Request
 from datetime import datetime
 from services.cache import user_profile_table, _from_decimal
+from services.clock import now_jst
 from services.technical import DEFAULT_PRIORITY, DEFAULT_PERIOD_DAYS, normalize_priority
 
 router = APIRouter()
@@ -55,7 +56,7 @@ async def save_user_profile(request: Request):
             "priority_long":    normalize_priority(body.get("priority_long"),   "長期"),
             "period_short_max_days":  _period_days("period_short_max_days",  DEFAULT_PERIOD_DAYS["short_max"]),
             "period_medium_max_days": _period_days("period_medium_max_days", DEFAULT_PERIOD_DAYS["medium_max"]),
-            "updated_at":       datetime.now().isoformat(),
+            "updated_at":       now_jst().isoformat(),
         }
         user_profile_table.put_item(Item=item)
         return {"success": True}
