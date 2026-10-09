@@ -23,6 +23,7 @@ from boto3.dynamodb.conditions import Attr
 
 from services.cache import predictions_table, _to_decimal, _from_decimal
 from services.clock import now_jst, today_jst
+from services.market_data import drop_empty_rows
 
 
 # 「上昇」「下落」と判定する変化率のしきい値（%）
@@ -78,6 +79,29 @@ def resolve_horizon_days(period: str, period_days=None) -> int:
     except (TypeError, ValueError):
         pass
     return default
+
+
+def _scan_all(max_items=None, **kwargs) -> list:
+    """
+    scan をページングして最後まで読む。
+
+    DynamoDB の scan は1回で最大1MBまでしか返さず、続きは LastEvaluatedKey で取る。
+    また Limit は「絞り込み（FilterExpression）の前」に読む件数なので、
+    scan(FilterExpression=..., Limit=100) は「100件読んでから絞る」動きになり、
+    条件に合うデータが残っていても0件で終わることがある。
+    そのため Limit は使わず、ここで条件に合った件数を数えて打ち切る。
+
+    [max_items] 条件に合ったものをこの件数集めたら打ち切る（None なら全件）
+    """
+    items = []
+    while True:
+        res = predictions_table.scan(**kwargs)
+        items.extend(res.get("Items", []))
+        if max_items is not None and len(items) >= max_items:
+            return items[:max_items]
+        if "LastEvaluatedKey" not in res:
+            return items
+        kwargs["ExclusiveStartKey"] = res["LastEvaluatedKey"]
 
 
 # ===================================================
@@ -165,7 +189,7 @@ def _close_on_or_before(ticker_code: str, target: date):
         # 前後に余裕を持って取得してから対象日以前の最後の行を取る
         start = target - timedelta(days=10)
         end   = target + timedelta(days=2)
-        hist = t.history(start=str(start), end=str(end))
+        hist = drop_empty_rows(t.history(start=str(start), end=str(end)))
         if hist.empty:
             return None
         hist = hist[hist.index.date <= target]
@@ -189,12 +213,11 @@ def evaluate_pending(limit: int = 100) -> dict:
     skipped = 0
 
     try:
-        res = predictions_table.scan(
+        items = _scan_all(
+            max_items=limit,
             FilterExpression=Attr("status").eq("pending")
             & Attr("evaluate_at").lte(str(today)),
-            Limit=limit,
         )
-        items = res.get("Items", [])
     except Exception as e:
         print(f"判定対象の取得エラー: {e}")
         return {"evaluated": 0, "skipped": 0, "error": str(e)}
@@ -268,14 +291,7 @@ def get_accuracy_stats(user_id: str = "") -> dict:
     ・累計のトークン使用量
     """
     try:
-        items = []
-        kwargs = {}
-        while True:
-            res = predictions_table.scan(**kwargs)
-            items.extend(res.get("Items", []))
-            if "LastEvaluatedKey" not in res:
-                break
-            kwargs["ExclusiveStartKey"] = res["LastEvaluatedKey"]
+        items = _scan_all()
     except Exception as e:
         print(f"成績集計エラー: {e}")
         return {"error": str(e)}
@@ -358,8 +374,8 @@ def get_recent_predictions(limit: int = 30, code: str = "") -> list:
             )
             items = res.get("Items", [])
         else:
-            res = predictions_table.scan()
-            items = res.get("Items", [])
+            # 1ページ（1MB）目だけを並べ替えると「最新」にならないので全件読む
+            items = _scan_all()
             items.sort(key=lambda i: str(i.get("predicted_at", "")), reverse=True)
             items = items[:limit]
 

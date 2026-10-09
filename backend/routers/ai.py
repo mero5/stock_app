@@ -15,6 +15,7 @@ from services.technical import (
     resolve_sector_trend, normalize_checks, PROMPT_VERSION
 )
 from services.predictions import save_prediction, resolve_horizon_days
+from services.market_data import drop_empty_rows
 import math
 from fastapi.responses import JSONResponse
 
@@ -89,7 +90,8 @@ def error_response(payload: dict) -> Response:
     )
 
 
-def call_openai_json(prompt: str, system: str, max_tokens: int = 4000):
+def call_openai_json(prompt: str, system: str, max_tokens: int = 4000,
+                     model: str = "gpt-4o"):
     """
     OpenAIを呼んでJSONを取得する共通処理。
 
@@ -101,7 +103,7 @@ def call_openai_json(prompt: str, system: str, max_tokens: int = 4000):
     使用量は予測記録に残して実コストを追えるようにする。
     """
     res = openai_client.chat.completions.create(
-        model="gpt-4o",
+        model=model,
         messages=[
             {"role": "system", "content": system},
             {"role": "user",   "content": prompt},
@@ -140,7 +142,7 @@ async def get_ai_analysis(code: str):
             ticker = yf.Ticker(code)
 
         info = ticker.info
-        hist = ticker.history(period="3mo")
+        hist = drop_empty_rows(ticker.history(period="3mo"))
         raw_news = ticker.news[:5] if ticker.news else []
 
         # ── ニュース整形 ──
@@ -399,18 +401,25 @@ PER: {per}倍 / PBR: {pbr}倍 / ROE: {roe}
 }}
 """
 
+    # call_openai_json を使い、JSONモード（JSON以外を返させない）と
+    # max_tokens 切れの検出を AI診断と共通にする。
+    # 以前は素の呼び出しで、AIが前置き文や途中で切れたJSONを返すと
+    # json.loads が失敗して「予期せぬエラー」になっていた。
     try:
-        res = openai_client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": "あなたは日本株・米国株に詳しい投資アドバイザーです。必ずJSON形式のみで返してください。"},
-                {"role": "user",   "content": prompt}
-            ],
+        result, _usage = call_openai_json(
+            prompt,
+            system="あなたは日本株・米国株に詳しい投資アドバイザーです。必ずJSON形式のみで返してください。",
             max_tokens=3000,
+            model="gpt-4o-mini",
         )
-        raw = res.choices[0].message.content.strip()
-        raw = raw.replace("```json", "").replace("```", "").strip()
-        return json.loads(raw)
+        return result
+    except json.JSONDecodeError as e:
+        print(f"AI相談 JSONパースエラー: {e}")
+        return {
+            "error": "AI分析結果の解析に失敗しました。もう一度お試しください。",
+            "error_detail": f"JSONパースエラー: {str(e)}",
+            "error_type": "parse_error",
+        }
     except Exception as e:
         print(f"AI相談エラー: {e}")
         return classify_error(e)
