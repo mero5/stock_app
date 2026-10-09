@@ -154,12 +154,8 @@ stock_app のコードの書き方の決まり。**コードを変える前に�
 
 ---
 
-## 9. 今後の予定（自動チェック）
+## 9. 自動チェック（CI）
 
-今は人（と Claude）がこの規約を読んで守る運用。開いているPRがすべてマージされた後に、次を入れる予定：
-
-- Python：`ruff`（lint と自動整形）
-- Dart：`dart format` と `flutter analyze`
-- GitHub Actions（CI）：PR を出すたびに上のチェックと pytest を自動で実行する
-
-入れたら、この章を「CI で自動チェックしている内容」に書き換える。
+- PR #21（`chore/ci-unit-tests`）で、PR のたびに GitHub Actions が `pytest`（backend）と `flutter analyze` / `flutter test` を自動で実行する。**CI が赤（失敗）のPRはマージしない**
+- 自動整形（Python：`ruff`、Dart：`dart format`）はまだ入れていない。全ファイルの書き方が一気に変わり、開いているPRが全部コンフリクトするため、**開いているPRが無いときに別PRで** CI に追加する予定
+- 入れたら、この章を「CI で自動チェックしている内容」に書き換える
