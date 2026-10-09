@@ -6,6 +6,7 @@ from fastapi import APIRouter, Request
 from openai import OpenAI
 import yfinance as yf
 import google.generativeai as genai
+from config.timeouts import GEMINI_TIMEOUT_SEC
 from services.technical import (
     get_technical_data, get_fundamental_data,
     get_macro_data, get_nikkei225_breadth,
@@ -307,7 +308,8 @@ ROE: {roe}
 
         model = genai.GenerativeModel("gemini-2.5-flash")
         response = model.generate_content(
-            [{"role": "user", "parts": [{"text": prompt}]}]
+            [{"role": "user", "parts": [{"text": prompt}]}],
+            request_options={"timeout": GEMINI_TIMEOUT_SEC},
         )
         raw = response.text.strip()
         raw = raw.replace("```json", "").replace("```", "").strip()
