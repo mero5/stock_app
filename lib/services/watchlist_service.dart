@@ -31,6 +31,18 @@ class WatchlistService {
   /// 米国株（英字）・すでに5桁のコードはそのまま返す。
   static String _normalize(String code) => StockCode.storage(code);
 
+  /// Lambda の応答が成功（HTTP 2xx）でなければ例外を投げる
+  ///
+  /// 以前は応答を確認していなかったため、保存・削除に失敗しても
+  /// 画面上は成功したように見えていた（追加したのに一覧に出ない・削除したのに残る）。
+  static void _checkResponse(http.Response response, String action) {
+    if (response.statusCode >= 200 && response.statusCode < 300) return;
+    throw WatchlistException(
+      'ウォッチリストの$actionに失敗しました。時間をおいてもう一度お試しください。',
+      'HTTP ${response.statusCode}: ${response.body}',
+    );
+  }
+
   // ============================================================
   // 保存
   // ============================================================
@@ -49,11 +61,12 @@ class WatchlistService {
     final normalized = stocks.map(_normalize).toList();
 
     // LambdaにPOSTして保存
-    await http.post(
+    final response = await http.post(
       Uri.parse(Constants.saveUrl),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({'userId': user.userId, 'stocks': normalized}),
     );
+    _checkResponse(response, '保存');
   }
 
   // ============================================================
@@ -83,6 +96,7 @@ class WatchlistService {
     // デバッグ用：削除結果をログに出力
     // debugPrintはリリースビルドでは出力されない
     debugPrint('削除レスポンス: ${response.body}');
+    _checkResponse(response, '削除');
   }
 
   // ============================================================
@@ -110,4 +124,18 @@ class WatchlistService {
         .map<String>((item) => _normalize(item['stock'].toString()))
         .toList();
   }
+}
+
+/// ウォッチリストの保存・削除に失敗したときの例外
+///
+/// [message] ユーザー向けの日本語メッセージ（ErrorDialog の上段）
+/// [detail]  技術的な詳細（ErrorDialog の折りたたみ）
+class WatchlistException implements Exception {
+  final String message;
+  final String detail;
+
+  WatchlistException(this.message, this.detail);
+
+  @override
+  String toString() => '$message ($detail)';
 }

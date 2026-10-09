@@ -99,25 +99,43 @@ app.include_router(notices_router.router)
 # ===================================================
 # 起動時処理
 # ===================================================
-@app.on_event("startup")
-async def load_stocks_master():
-    """J-Quantsから全上場銘柄マスタを取得してメモリに保持"""
-    global stocks_master
+def fetch_stocks_master() -> bool:
+    """
+    J-Quantsから全上場銘柄マスタを取得して stocks_master に入れる。成功したら True
+
+    起動時に1回呼ぶほか、検索・銘柄名APIでマスタが空のときに routers/stock.py から呼ばれる。
+    以前は起動時の1回だけだったので、そこで失敗する（J-Quantsの一時的な障害・タイムアウト）と、
+    Lambdaのコンテナが入れ替わるまで日本株の検索・銘柄名が全部空になっていた。
+    """
     try:
         res = requests.get(
             "https://api.jquants.com/v2/equities/master",
             headers={"x-api-key": JQUANTS_API_KEY},
             timeout=JQUANTS_TIMEOUT,
         )
-        data = res.json()
-        loaded = data.get("data", [])
-        stocks_master.extend(loaded)
-        # routerに反映
-        stock_router.stocks_master = stocks_master
-        stock_router.JQUANTS_API_KEY = JQUANTS_API_KEY
+        if res.status_code != 200:
+            print(f"銘柄マスタ取得エラー: HTTP {res.status_code} {res.text[:200]}")
+            return False
+        loaded = res.json().get("data", [])
+        if not loaded:
+            print("銘柄マスタ取得エラー: 0件")
+            return False
+        # routers/stock.py と同じリストを共有しているので、作り直さずに中身を入れ替える
+        stocks_master[:] = loaded
         print(f"銘柄マスタ取得完了: {len(stocks_master)}件")
+        return True
     except Exception as e:
         print(f"銘柄マスタ取得エラー: {e}")
+        return False
+
+
+stock_router.reload_stocks_master = fetch_stocks_master
+
+
+@app.on_event("startup")
+async def load_stocks_master():
+    """起動時に銘柄マスタを取得してメモリに保持"""
+    fetch_stocks_master()
 
 
 @app.get("/health")
