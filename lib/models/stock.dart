@@ -1,3 +1,5 @@
+import '../utils/stock_code.dart';
+
 class Stock {
   final String code;
   final String name;
@@ -39,10 +41,7 @@ class Stock {
 
   // stock.dart に追加
   String get displayCode {
-    // 5桁の数字コードは4桁で表示
-    if (RegExp(r'^\d{5}$').hasMatch(code)) {
-      return code.substring(0, 4);
-    }
-    return code;
+    // 日本株の5桁コードは4桁で表示（285A0 → 285A のような英字入りも含む）
+    return StockCode.display(code);
   }
 }

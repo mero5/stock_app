@@ -11,6 +11,7 @@ import 'dart:async';
 import 'package:provider/provider.dart';
 import '../viewmodels/detail_viewmodel.dart';
 import '../theme/app_theme.dart';
+import '../utils/stock_code.dart';
 
 class DetailScreen extends StatefulWidget {
   final String code;
@@ -184,9 +185,7 @@ class _DetailScreenState extends State<DetailScreen> {
               children: [
                 Text(
                   // 5桁→4桁表示
-                  RegExp(r'^\d{5}$').hasMatch(widget.code)
-                      ? widget.code.substring(0, 4)
-                      : widget.code,
+                  StockCode.display(widget.code),
                   style: const TextStyle(color: Colors.grey, fontSize: 12),
                 ),
                 const SizedBox(height: 4),

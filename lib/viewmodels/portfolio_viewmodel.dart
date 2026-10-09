@@ -16,6 +16,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../config/constants.dart';
 import '../services/stock_service.dart';
+import '../utils/stock_code.dart';
 
 class PortfolioViewModel extends ChangeNotifier {
   // ============================================================
@@ -146,14 +147,10 @@ class PortfolioViewModel extends ChangeNotifier {
 
   /// 銘柄コードをyfinance用のticker形式に変換する
   ///
-  /// 4桁数字 → 末尾に「.T」を付ける（例：7203 → 7203.T）
-  /// 5桁数字 → 末尾の「0」を除いて「.T」を付ける（例：72030 → 7203.T）
-  /// 英字（米国株）→ そのまま返す（例：AAPL → AAPL）
-  String _toTickerCode(String code) {
-    if (RegExp(r'^\d{4}$').hasMatch(code)) return '$code.T';
-    if (RegExp(r'^\d{5}$').hasMatch(code)) return '${code.substring(0, 4)}.T';
-    return code;
-  }
+  /// 日本株4桁 → 末尾に「.T」を付ける（例：7203 → 7203.T、285A → 285A.T）
+  /// 日本株5桁 → 末尾の「0」を除いて「.T」を付ける（例：72030 → 7203.T）
+  /// 米国株 → そのまま返す（例：AAPL → AAPL）
+  String _toTickerCode(String code) => StockCode.ticker(code);
 
   // ============================================================
   // AI診断実行

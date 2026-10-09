@@ -17,6 +17,7 @@ from services.technical import (
 )
 from services.predictions import save_prediction, resolve_horizon_days
 from services.market_data import drop_empty_rows
+from services.stock_code import to_yf_ticker
 import math
 from fastapi.responses import JSONResponse
 
@@ -135,11 +136,7 @@ def call_openai_json(prompt: str, system: str, max_tokens: int = 4000,
 @router.get("/stock/ai_analysis")
 async def get_ai_analysis(code: str):
     try:
-        if code.isdigit():
-            yf_code = code[:-1] if len(code) == 5 else code
-            ticker = yf.Ticker(f"{yf_code}.T")
-        else:
-            ticker = yf.Ticker(code)
+        ticker = yf.Ticker(to_yf_ticker(code))
 
         info = ticker.info
         hist = drop_empty_rows(ticker.history(period="3mo"))
@@ -485,7 +482,7 @@ async def swing_analysis(request: Request):
 
     # ticker_code 正規化
     ticker_code = body.get("ticker_code") or (
-        f"{code}.T" if len(code) == 4 and code.isdigit() else code
+        to_yf_ticker(code)
     )
 
     # ── データ取得〜AI呼び出しまで丸ごとtryの中に入れる ──

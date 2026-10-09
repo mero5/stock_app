@@ -13,6 +13,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:stock_app/models/stock.dart';
 import 'package:stock_app/utils/formatter.dart';
+import 'package:stock_app/utils/stock_code.dart';
 
 void main() {
   group('Stock.displayCode', () {
@@ -26,6 +27,33 @@ void main() {
 
     test('米国株のティッカーはそのまま', () {
       expect(Stock(code: 'AAPL', name: 'Apple').displayCode, 'AAPL');
+    });
+
+    test('英字入りの日本株コード（285A0）も4桁で表示する', () {
+      expect(Stock(code: '285A0', name: 'キオクシア').displayCode, '285A');
+    });
+  });
+
+  // 2024年から東証は英字入りのコード（285A キオクシア など）を使っている。
+  // 以前は「数字だけか」で判定していたため、米国株として扱っていた。
+  group('StockCode', () {
+    test('日本株かどうか', () {
+      for (final code in ['7203', '72030', '285A', '285A0', '130A']) {
+        expect(StockCode.isJp(code), isTrue, reason: code);
+      }
+      for (final code in ['AAPL', 'BRK-B', '^N225', '7203.T', '720', '285a']) {
+        expect(StockCode.isJp(code), isFalse, reason: code);
+      }
+    });
+
+    test('保存用は5桁、yfinance用は4桁＋.T', () {
+      expect(StockCode.storage('7203'), '72030');
+      expect(StockCode.storage('285A'), '285A0');
+      expect(StockCode.storage('72030'), '72030');
+      expect(StockCode.storage('AAPL'), 'AAPL');
+      expect(StockCode.ticker('285A0'), '285A.T');
+      expect(StockCode.ticker('7203'), '7203.T');
+      expect(StockCode.ticker('AAPL'), 'AAPL');
     });
   });
 
