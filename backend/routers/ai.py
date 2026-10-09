@@ -244,16 +244,18 @@ async def get_ai_analysis(code: str):
         ema26 = ema(closes, 26)
         macd  = round(ema12 - ema26, 2) if ema12 and ema26 else None
 
+        # RSI（ワイルダー方式。/stock/detail・AI診断と同じ計算）
+        # 以前は直近14日の単純平均で計算していて、画面ごとに値が違っていた
         rsi = None
-        if len(closes) >= 15:
-            period = 14
-            gains, losses = [], []
-            for i in range(1, period + 1):
-                diff = closes[-period - 1 + i] - closes[-period - 2 + i]
-                gains.append(max(diff, 0))
-                losses.append(max(-diff, 0))
-            avg_gain = sum(gains) / period
-            avg_loss = sum(losses) / period
+        period = 14
+        if len(closes) >= period + 1:
+            gains  = [max(closes[i] - closes[i - 1], 0) for i in range(1, len(closes))]
+            losses = [max(closes[i - 1] - closes[i], 0) for i in range(1, len(closes))]
+            avg_gain = sum(gains[:period]) / period
+            avg_loss = sum(losses[:period]) / period
+            for g, l in zip(gains[period:], losses[period:]):
+                avg_gain = (avg_gain * (period - 1) + g) / period
+                avg_loss = (avg_loss * (period - 1) + l) / period
             if avg_loss != 0:
                 rsi = round(100 - (100 / (1 + avg_gain / avg_loss)), 1)
             else:
@@ -769,7 +771,7 @@ JSONのみ出力（前置き・説明文禁止）。
 - ドル円：{macro.get('usd_jpy')}円
 - 米10年債：{macro.get('us10y')}%
 - S&P500トレンド：{macro.get('sp500_trend')}
-- 金利差(10Y-2Y)：{macro.get('yield_spread')}
+- 金利差(10Y-3M)：{macro.get('yield_spread')}
 
 【診断期間】中期（1〜3ヶ月）
 
@@ -802,7 +804,7 @@ JSONのみ出力（前置き・説明文禁止）。
 - 日経平均トレンド：{macro.get('nikkei_trend')}
 - 米10年債：{macro.get('us10y')}%（金利環境）
 - ドル円：{macro.get('usd_jpy')}円
-- 金利差(10Y-2Y)：{macro.get('yield_spread')}（景気後退シグナル）
+- 金利差(10Y-3M)：{macro.get('yield_spread')}（景気後退シグナル）
 
 【診断期間】長期（6ヶ月以上）
 
