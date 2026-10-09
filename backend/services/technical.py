@@ -570,9 +570,10 @@ def get_earnings_alert(earnings_date_str: str, period: str, period_days=None) ->
         }
 
     try:
-        from datetime import datetime, date
+        from datetime import datetime
+        from services.clock import today_jst
         earnings_date = datetime.strptime(earnings_date_str, "%Y-%m-%d").date()
-        today         = date.today()
+        today         = today_jst()
         days_to       = (earnings_date - today).days
 
         if days_to < 0:
