@@ -1,4 +1,5 @@
 import math
+import time
 import datetime
 import requests
 import yfinance as yf
@@ -12,6 +13,12 @@ from services.market_data import drop_empty_rows
 # main.pyから注入される変数
 stocks_master = []
 JQUANTS_API_KEY = ""
+reload_stocks_master = None  # 銘柄マスタを取り直す関数（main.fetch_stocks_master）
+
+# 銘柄マスタが空のとき、取り直しを試す最短の間隔（秒）。
+# J-Quantsが落ちている間に、検索のたびに呼びに行かないようにする
+STOCKS_MASTER_RETRY_SEC = 60
+_last_master_retry = 0.0
 router = APIRouter()
 
 # ===================================================
@@ -22,6 +29,22 @@ def clean_value(v):
     if isinstance(v, float) and math.isnan(v):
         return None
     return v
+
+
+def ensure_stocks_master():
+    """
+    銘柄マスタが空なら取り直す（起動時の取得に失敗していた場合の復旧用）
+
+    STOCKS_MASTER_RETRY_SEC に1回までしか試さない。
+    """
+    global _last_master_retry
+    if stocks_master or reload_stocks_master is None:
+        return
+    now = time.monotonic()
+    if _last_master_retry and now - _last_master_retry < STOCKS_MASTER_RETRY_SEC:
+        return
+    _last_master_retry = now
+    reload_stocks_master()
 
 
 # ===================================================
@@ -37,6 +60,7 @@ def search(q: str):
     """
     if not q:
         return []
+    ensure_stocks_master()
     results = []
 
     # 日本語 → J-Quantsマスタから検索
@@ -81,6 +105,7 @@ def get_stock_name(code: str):
     - 米国株(英字コード) → yfinanceから取得
     """
     if code.isdigit():
+        ensure_stocks_master()
         # 4桁の場合は末尾に0を付けて5桁でJ-Quantsマスタ検索
         search_code = code + "0" if len(code) == 4 else code
         for s in stocks_master:
