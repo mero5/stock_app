@@ -7,6 +7,7 @@ from services.cache import stock_cache_table, cache_get, cache_set
 from config.timeouts import JQUANTS_TIMEOUT
 from services.clock import JST
 from services.market_data import drop_empty_rows
+from services.stock_code import is_jp_code, to_yf_ticker, to_jquants_code
 
 
 # main.pyから注入される変数
@@ -48,11 +49,12 @@ def search(q: str):
                 results.append({"code": code, "name": name, "market": "JP"})
         return results[:20]
 
-    # 数字 → J-Quantsマスタからコード検索
-    if q.isdigit():
+    # 数字で始まる → J-Quantsマスタからコード検索（285A のような英字入りのコードも含む）
+    if q[0].isdigit() and q.isalnum():
+        prefix = q.upper()
         for s in stocks_master:
             code = s.get("Code", "")
-            if code.startswith(q):
+            if code.startswith(prefix):
                 results.append({"code": code, "name": s.get("CoName", code), "market": "JP"})
         return results[:20]
 
@@ -80,9 +82,9 @@ def get_stock_name(code: str):
     - 日本株(数字コード) → J-Quantsマスタから検索（4桁→5桁変換）
     - 米国株(英字コード) → yfinanceから取得
     """
-    if code.isdigit():
+    if is_jp_code(code):
         # 4桁の場合は末尾に0を付けて5桁でJ-Quantsマスタ検索
-        search_code = code + "0" if len(code) == 4 else code
+        search_code = to_jquants_code(code)
         for s in stocks_master:
             if s.get("Code") == search_code:
                 return {"code": code, "name": s.get("CoName", code)}
@@ -112,12 +114,8 @@ def get_stock_detail(code: str):
     日本株は5桁コードの末尾0を除いてyfinanceに渡す
     """
     try:
-        if code.isdigit():
-            # 5桁→4桁に変換してyfinanceに渡す（例: 72030 → 7203.T）
-            yf_code = code[:-1] if len(code) == 5 else code
-            ticker = yf.Ticker(f"{yf_code}.T")
-        else:
-            ticker = yf.Ticker(code)
+        # 5桁→4桁に変換してyfinanceに渡す（例: 72030 → 7203.T、285A0 → 285A.T）
+        ticker = yf.Ticker(to_yf_ticker(code))
 
         info = ticker.info
 
@@ -272,11 +270,7 @@ def get_stock_price(code: str):
     詳細APIより軽量で高速
     """
     try:
-        if code.isdigit():
-            yf_code = code[:-1] if len(code) == 5 else code
-            ticker = yf.Ticker(f"{yf_code}.T")
-        else:
-            ticker = yf.Ticker(code)
+        ticker = yf.Ticker(to_yf_ticker(code))
 
         # 最新日が空の行で返ることがあるので、余裕を持って5日分取ってから空の行を除く
         hist = drop_empty_rows(ticker.history(period="5d"))
@@ -323,22 +317,18 @@ def get_stock_events(codes: str):
         if not code:
             continue
         try:
-            if code.isdigit():
-                yf_code = code[:-1] if len(code) == 5 else code
-                ticker = yf.Ticker(f"{yf_code}.T")
-            else:
-                ticker = yf.Ticker(code)
+            ticker = yf.Ticker(to_yf_ticker(code))
 
             info = ticker.info
             name = info.get("longName") or info.get("shortName") or code
 
             # 決算発表日（日本株はJ-Quantsから取得）
-            if code.isdigit():
+            if is_jp_code(code):
                 try:
                     res = requests.get(
                         "https://api.jquants.com/v2/fins/announcement",
                         headers={"x-api-key": JQUANTS_API_KEY},
-                        params={"code": (code[:-1] if len(code) == 5 else code) + "0"},
+                        params={"code": to_jquants_code(code)},
                         timeout=JQUANTS_TIMEOUT,
                     )
                     data = res.json()

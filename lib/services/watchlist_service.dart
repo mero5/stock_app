@@ -17,6 +17,7 @@ import 'package:flutter/foundation.dart';
 import 'package:amplify_flutter/amplify_flutter.dart';
 import 'package:http/http.dart' as http;
 import '../config/constants.dart';
+import '../utils/stock_code.dart';
 
 class WatchlistService {
   // ============================================================
@@ -26,20 +27,9 @@ class WatchlistService {
   /// 銘柄コードを5桁に正規化する（DynamoDB保存用）
   ///
   /// 日本株は4桁コードの末尾に「0」を付けて5桁にする。
-  /// 例：7203 → 72030、9984 → 99840
+  /// 例：7203 → 72030、9984 → 99840、285A → 285A0（英字入りのコード）
   /// 米国株（英字）・すでに5桁のコードはそのまま返す。
-  static String _normalize(String code) {
-    // 数字のみかどうかを判定（日本株かどうかの判断に使う）
-    final isAllDigits = RegExp(r'^\d+$').hasMatch(code);
-
-    // 4桁の数字コード（日本株）の場合のみ末尾に0を付ける
-    if (isAllDigits && code.length == 4) {
-      return '${code}0';
-    }
-
-    // 米国株・5桁コードはそのまま返す
-    return code;
-  }
+  static String _normalize(String code) => StockCode.storage(code);
 
   // ============================================================
   // 保存
