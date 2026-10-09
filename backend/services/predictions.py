@@ -22,6 +22,7 @@ import yfinance as yf
 from boto3.dynamodb.conditions import Attr
 
 from services.cache import predictions_table, _to_decimal, _from_decimal
+from services.clock import now_jst, today_jst
 from services.market_data import drop_empty_rows
 
 
@@ -136,7 +137,7 @@ def save_prediction(*, code, ticker_code, name, period, result,
                 return _to_float(node.get("value"), 0.0)
             return _to_float(node, 0.0)
 
-        now = datetime.now()
+        now = now_jst()
         item = {
             "code":          str(code),
             "predicted_at":  now.isoformat(),
@@ -207,7 +208,7 @@ def evaluate_pending(limit: int = 100) -> dict:
     成績画面を開いたタイミングで呼ばれる（遅延評価）。
     定期実行の仕組みが要らないので構成がシンプルになる。
     """
-    today = date.today()
+    today = today_jst()
     evaluated = 0
     skipped = 0
 
@@ -256,7 +257,7 @@ def evaluate_pending(limit: int = 100) -> dict:
                     ":c":  round(change_pct, 2),
                     ":a":  actual,
                     ":ok": predicted == actual,
-                    ":t":  datetime.now().isoformat(),
+                    ":t":  now_jst().isoformat(),
                 }),
             )
             evaluated += 1
