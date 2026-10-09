@@ -6,6 +6,7 @@ import exchange_calendars as xcals
 from fastapi import APIRouter, Request
 from services.technical import get_nikkei225_breadth
 from services.cache import cache_get, cache_set, market_cache_table
+from services.clock import today_jst
 from services.market_data import drop_empty_rows
 
 
@@ -206,7 +207,7 @@ def get_upcoming_events(months: int = 6):
     import datetime
 
     months = max(1, min(int(months or 6), 12))
-    today = datetime.date.today()
+    today = today_jst()
     cache_key = {'cache_key': f'upcoming_{months}_{today}'}
 
     cached = cache_get(market_cache_table, cache_key)

@@ -5,6 +5,7 @@ import yfinance as yf
 from fastapi import APIRouter
 from services.cache import stock_cache_table, cache_get, cache_set
 from config.timeouts import JQUANTS_TIMEOUT
+from services.clock import JST
 from services.market_data import drop_empty_rows
 
 
@@ -378,7 +379,7 @@ def get_stock_events(codes: str):
             try:
                 ex_div = info.get("exDividendDate")
                 if ex_div:
-                    ex_dividend = str(datetime.datetime.fromtimestamp(ex_div).date())
+                    ex_dividend = str(datetime.datetime.fromtimestamp(ex_div, tz=JST).date())
                     result.append({
                         "code": code,
                         "name": name,
