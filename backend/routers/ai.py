@@ -20,7 +20,6 @@ from fastapi.responses import JSONResponse
 
 router = APIRouter()
 openai_client = None
-gemini_model = None
 
 def clean_value(v):
     import math

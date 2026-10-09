@@ -10,11 +10,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 from openai import OpenAI
 import google.generativeai as genai
-from googleapiclient.discovery import build
 import math
 from fastapi.responses import JSONResponse
 import json
-from fastapi.responses import JSONResponse
 
 # ===================================================
 # APIキー設定
@@ -26,38 +24,17 @@ YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
 GEMINI_API_KEY  = os.getenv("GEMINI_API_KEY")
 OPENAI_API_KEY  = os.getenv("OPENAI_API_KEY")
 
-# YouTube・OpenAIクライアント初期化
-youtube = build("youtube", "v3", developerKey=YOUTUBE_API_KEY)
+# OpenAI・Geminiクライアント初期化
+# （YouTubeクライアントは routers/youtube.py がリクエストごとに作る）
+# （Geminiのモデルは各routerが genai.GenerativeModel() で都度作るので、ここでは configure だけ）
 openai_client = OpenAI(api_key=OPENAI_API_KEY)
 genai.configure(api_key=GEMINI_API_KEY)
-gemini_model = genai.GenerativeModel("gemini-2.5-flash")
 
 
 # ===================================================
 # FastAPIアプリ初期化
 # ===================================================
 app = FastAPI()
-
-import math
-from fastapi.encoders import jsonable_encoder
-from fastapi import FastAPI
-import json
-
-# FastAPIのデフォルトJSONエンコーダーをオーバーライド
-class NanSafeEncoder(json.JSONEncoder):
-    def default(self, obj):
-        return None
-    
-    def encode(self, obj):
-        def fix_nan(o):
-            if isinstance(o, float) and (math.isnan(o) or math.isinf(o)):
-                return None
-            if isinstance(o, dict):
-                return {k: fix_nan(v) for k, v in o.items()}
-            if isinstance(o, list):
-                return [fix_nan(v) for v in o]
-            return o
-        return super().encode(fix_nan(obj))
 
 # uvicornのJSONレスポンスを上書き
 import starlette.responses as _sr
@@ -101,9 +78,7 @@ stock_router.stocks_master   = stocks_master
 stock_router.JQUANTS_API_KEY = JQUANTS_API_KEY
 market_router.openai_client  = openai_client
 youtube_router.YOUTUBE_API_KEY = YOUTUBE_API_KEY
-youtube_router.gemini_model    = gemini_model
 ai_router.openai_client        = openai_client
-ai_router.gemini_model         = gemini_model
 
 # ── routerを登録 ──
 app.include_router(stock_router.router)

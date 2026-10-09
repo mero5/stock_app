@@ -1,4 +1,3 @@
-import os
 import json
 from fastapi import APIRouter, Request
 from googleapiclient.discovery import build
@@ -7,7 +6,6 @@ from services.cache import cache_get, cache_set, market_cache_table
 
 router = APIRouter()
 YOUTUBE_API_KEY = ""
-gemini_model = None
 
 
 @router.get("/channels/search")
@@ -89,10 +87,6 @@ async def summarize_video(request: Request):
             "error": str(e)
         }
 
-
-@router.get("/summaries")
-def get_summaries(channel_ids: str):
-    return []
 
 
 @router.get("/channels/{channel_id}/videos")
