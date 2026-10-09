@@ -67,6 +67,12 @@ def resolve_horizon_days(period: str, period_days=None) -> int:
     予測の答え合わせをする日数を決める。
 
     ユーザーが設定画面で期間の日数を変えている場合はそれに合わせる。
+
+    長期は「中期の上限 x 2」日後に判定する。
+    以前は長期だけ設定に関係なく180日固定で、中期の上限を120日にすると
+    長期（120日超）なのに判定日が中期とほとんど変わらない、といったずれがあった。
+    中期の上限が既定の90日なら 90 x 2 = 180日 で、従来と同じになる。
+    （決算アラートの長期の caution 判定も「中期の上限 x 2」で、それに合わせている）
     """
     default = DEFAULT_HORIZON_DAYS.get(period, 90)
     if not isinstance(period_days, dict):
@@ -76,6 +82,9 @@ def resolve_horizon_days(period: str, period_days=None) -> int:
             return int(period_days.get("short_max") or default)
         if period == "中期":
             return int(period_days.get("medium_max") or default)
+        if period == "長期":
+            medium_max = period_days.get("medium_max")
+            return int(medium_max) * 2 if medium_max else default
     except (TypeError, ValueError):
         pass
     return default
