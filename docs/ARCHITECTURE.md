@@ -91,7 +91,7 @@ config/          設定値・定数（タイムアウト、お知らせ、日程
 | （アプリ）エラーの表示 | `lib/widgets/error_dialog.dart` / `api_error_banner.dart` | 失敗しても何も出ない画面になる |
 | （アプリ）ログイン状態の確認 | `AuthService.hasValidSession()` / `lib/services/session_guard.dart` | `isSignedIn` は期限切れでも true のまま |
 | （アプリ）表示用の整形 | `lib/utils/formatter.dart` | 数字・日付の表示がばらつく |
-| （アプリ）AI系APIの待ち時間 | `StockService.aiTimeout` | バックエンドのタイムアウトとの整合が取れなくなる |
+| （アプリ）通信の待ち時間 | `lib/config/timeouts.dart` の `AppTimeouts.api`（40秒）／`AppTimeouts.ai`（120秒）。`StockService.aiTimeout` は `AppTimeouts.ai` の別名 | 付けないと、サーバーが応答しないときに読み込み中のまま止まる（最悪 Lambda の15分）。バックエンドのタイムアウトより長くしないと、バックエンドのエラーを受け取れない |
 
 ---
 

@@ -6,6 +6,7 @@ import '../services/auth_service.dart';
 import '../services/channel_service.dart';
 import 'youtube_detail_screen.dart';
 import 'youtube_video_list_screen.dart';
+import '../config/timeouts.dart';
 
 class YoutubeScreen extends StatefulWidget {
   const YoutubeScreen({super.key});
@@ -77,7 +78,7 @@ class _YoutubeScreenState extends State<YoutubeScreen>
         Uri.parse(
           "${Constants.backendUrl}/channels/search?q=${Uri.encodeComponent(query)}",
         ),
-      );
+      ).timeout(AppTimeouts.api);
       final List data = jsonDecode(res.body);
       setState(() {
         searchResults = data
@@ -146,7 +147,7 @@ class _YoutubeScreenState extends State<YoutubeScreen>
         Uri.parse(
           "${Constants.backendUrl}/channels/${channel["channel_id"]}/latest_video",
         ),
-      );
+      ).timeout(AppTimeouts.api);
       final videoData = jsonDecode(res.body);
 
       if (videoData["error"] != null) {
@@ -180,7 +181,7 @@ class _YoutubeScreenState extends State<YoutubeScreen>
           "url": videoUrl,
           "transcript": description,
         }),
-      );
+      ).timeout(AppTimeouts.ai);
       final summaryData = jsonDecode(summaryRes.body);
 
       // バックエンドから返ってきたJSONをそのまま使い、channel_nameとtitle

@@ -18,6 +18,7 @@ import '../config/constants.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'youtube_detail_screen.dart';
+import '../config/timeouts.dart';
 
 class YoutubeVideoListScreen extends StatefulWidget {
   /// 表示するチャンネルの情報
@@ -109,7 +110,7 @@ class _YoutubeVideoListScreenState extends State<YoutubeVideoListScreen> {
           'url': videoUrl,
           'transcript': video['description'] ?? '',
         }),
-      );
+      ).timeout(AppTimeouts.ai);
 
       final data = jsonDecode(res.body);
 

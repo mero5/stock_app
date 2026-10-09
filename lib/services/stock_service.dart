@@ -20,10 +20,12 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../config/constants.dart';
 import '../models/stock.dart';
+import '../config/timeouts.dart';
 
 class StockService {
   /// AI系APIのタイムアウト（GPT-4oの応答が遅いので長めに取る）
-  static const Duration aiTimeout = Duration(seconds: 120);
+  /// （値は lib/config/timeouts.dart の AppTimeouts.ai。ここは既存の呼び出し元のための別名）
+  static const Duration aiTimeout = AppTimeouts.ai;
 
   // ============================================================
   // 共通ヘルパー
@@ -97,7 +99,7 @@ class StockService {
         Uri.parse(
           '${Constants.backendUrl}/stock/name?code=${Uri.encodeComponent(code)}',
         ),
-      );
+      ).timeout(AppTimeouts.api);
       final data = jsonDecode(res.body);
       return data['name']?.toString() ?? code;
     } catch (_) {
@@ -118,7 +120,7 @@ class StockService {
         Uri.parse(
           '${Constants.backendUrl}/stock/price?code=${Uri.encodeComponent(code)}',
         ),
-      );
+      ).timeout(AppTimeouts.api);
       return jsonDecode(res.body);
     } catch (_) {
       return {};
@@ -136,7 +138,7 @@ class StockService {
       Uri.parse(
         '${Constants.backendUrl}/stock/detail?code=${Uri.encodeComponent(code)}',
       ),
-    );
+    ).timeout(AppTimeouts.api);
     return jsonDecode(res.body);
   }
 
@@ -152,7 +154,7 @@ class StockService {
       Uri.parse(
         '${Constants.backendUrl}/search?q=${Uri.encodeComponent(keyword)}',
       ),
-    );
+    ).timeout(AppTimeouts.api);
     final List data = jsonDecode(res.body);
     return data
         .map<Map<String, String>>(
@@ -229,7 +231,7 @@ class StockService {
         Uri.parse(
           '${Constants.backendUrl}/stock/events?codes=${Uri.encodeComponent(codesParam)}',
         ),
-      );
+      ).timeout(AppTimeouts.api);
       final List data = jsonDecode(res.body);
       return List<Map<String, dynamic>>.from(data);
     } catch (e) {
@@ -431,7 +433,7 @@ class StockService {
         Uri.parse(
           '${Constants.backendUrl}/market/events?year=$year&month=$month',
         ),
-      );
+      ).timeout(AppTimeouts.api);
       final List data = jsonDecode(res.body);
       return List<Map<String, dynamic>>.from(data);
     } catch (e) {
@@ -481,7 +483,7 @@ class StockService {
           '${Constants.backendUrl}/stats/predictions'
           '?limit=$limit&code=${Uri.encodeComponent(code)}',
         ),
-      );
+      ).timeout(AppTimeouts.api);
       final data = jsonDecode(res.body);
       return List<Map<String, dynamic>>.from(data['predictions'] ?? []);
     } catch (e) {
@@ -503,7 +505,7 @@ class StockService {
     try {
       final res = await http.get(
         Uri.parse('${Constants.backendUrl}/market/upcoming?months=$months'),
-      );
+      ).timeout(AppTimeouts.api);
       final List data = jsonDecode(res.body);
       return List<Map<String, dynamic>>.from(data);
     } catch (e) {
@@ -527,7 +529,7 @@ class StockService {
         Uri.parse(
           '${Constants.backendUrl}/nikkei/monthly?year=$year&month=$month',
         ),
-      );
+      ).timeout(AppTimeouts.api);
       return jsonDecode(res.body) as Map<String, dynamic>;
     } catch (e) {
       debugPrint('日経平均取得エラー: $e');
@@ -547,7 +549,7 @@ class StockService {
     try {
       final res = await http.get(
         Uri.parse('${Constants.backendUrl}/market/sectors?period=$period'),
-      );
+      ).timeout(AppTimeouts.api);
       return jsonDecode(res.body) as Map<String, dynamic>;
     } catch (e) {
       // エラー時は空のセクターデータを返す
@@ -567,7 +569,7 @@ class StockService {
         Uri.parse('${Constants.backendUrl}/market/sector_comment'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode(sectors),
-      );
+      ).timeout(AppTimeouts.ai);
       final data = jsonDecode(res.body);
       return data['comment'] ?? '';
     } catch (e) {
@@ -591,7 +593,7 @@ class StockService {
         Uri.parse(
           '${Constants.backendUrl}/channels/search?q=${Uri.encodeComponent(query)}',
         ),
-      );
+      ).timeout(AppTimeouts.api);
       final List data = jsonDecode(res.body);
       return data
           .map<Map<String, String>>(
@@ -621,7 +623,7 @@ class StockService {
         Uri.parse('${Constants.backendUrl}/summarize'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({'title': title, 'transcript': transcript}),
-      );
+      ).timeout(AppTimeouts.ai);
       final data = jsonDecode(res.body);
       return data['summary'] ?? '要約できませんでした';
     } catch (e) {
@@ -645,7 +647,7 @@ class StockService {
         Uri.parse(
           '${Constants.backendUrl}/channels/$channelId/videos?max_results=$maxResults',
         ),
-      );
+      ).timeout(AppTimeouts.api);
       final data = jsonDecode(res.body);
       return List<Map<String, dynamic>>.from(data['videos'] ?? []);
     } catch (e) {
