@@ -1,0 +1,79 @@
+# ===================================================
+# PRのプレビュー（Web版を一時的に公開する）
+#
+# 動くタイミング：
+#   ・PR に「preview」ラベルを付けたとき
+#   ・ラベルが付いたPRに push したとき（同じURLの中身が最新になる）
+#
+# 中身：
+#   PRのコードで Flutter Web版をビルドし、Firebase Hosting の
+#   「プレビューチャネル」（PRごとの一時的なURL）に公開する。
+#   URL は PR のコメントに自動で書き込まれ、7日で自動的に消える。
+#
+# 注意：
+#   ・接続先は本番のAPI・本番のデータ（lib/config/constants.dart）。
+#     確認はテスト用アカウントで行う。AI分析ボタンを押すと OpenAI の料金がかかる
+#   ・バックエンドの変更はプレビューに反映されない（デプロイされるまで本番の動き）
+#   ・必要な Secrets：FIREBASE_SERVICE_ACCOUNT（鍵のJSON）／ FIREBASE_PROJECT_ID
+#   ・main のルールセットの必須チェックではない（ラベルを付けたPRだけ動くため）
+# ===================================================
+name: Preview
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, labeled]
+
+permissions:
+  contents: read
+  pull-requests: write   # URL をコメントするため
+  checks: write          # 公開結果をチェックとして表示するため
+
+jobs:
+  preview:
+    name: preview（Web版を公開）
+    # ・preview ラベルが付いている
+    # ・別のラベルを付けただけのときは動かさない
+    # ・フォーク（他人のコピー）からのPRは Secrets が渡らないので動かさない
+    if: >-
+      contains(github.event.pull_request.labels.*.name, 'preview') &&
+      (github.event.action != 'labeled' || github.event.label.name == 'preview') &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    # 同じPRで連続 push したら、古い方の公開は止める。
+    # ワークフロー全体ではなくジョブに付けるのは、別のラベルを付けただけの
+    # （if で飛ばされる）実行が、公開中の実行を止めてしまわないようにするため
+    concurrency:
+      group: preview-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Secrets が登録されているか確認
+        env:
+          SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
+        run: |
+          if [ -z "$SERVICE_ACCOUNT" ] || [ -z "$PROJECT_ID" ]; then
+            echo "::error::Secrets（FIREBASE_SERVICE_ACCOUNT / FIREBASE_PROJECT_ID）が未登録です。リポジトリの Settings → Secrets and variables → Actions で登録してください"
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: 3.41.2   # 開発環境・ci.yml と同じバージョン
+          cache: true
+
+      - name: Web版をビルド
+        run: |
+          flutter pub get
+          flutter build web --release
+
+      - name: Firebase Hosting のプレビューに公開
+        uses: FirebaseExtended/action-hosting-deploy@v0
+        with:
+          repoToken: ${{ secrets.GITHUB_TOKEN }}
+          firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          projectId: ${{ secrets.FIREBASE_PROJECT_ID }}
+          expires: 7d
