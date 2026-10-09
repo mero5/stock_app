@@ -1,6 +1,7 @@
 class Constants {
-  // FastAPI on EC2
-  static const String backendUrl = "http://13.114.75.49:8000";
+  // FastAPI on Lambda（Function URL）。旧: EC2 http://13.114.75.49:8000
+  static const String backendUrl =
+      "https://pcg3tt7tmvzye4pwh3mqkfdjs40muver.lambda-url.ap-northeast-1.on.aws";
 
   // Lambda - ウォッチリスト保存
   static const String saveUrl =
