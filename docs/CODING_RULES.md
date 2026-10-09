@@ -67,6 +67,8 @@ stock_app のコードの書き方の決まり。**コードを変える前に�
   | 画面表示（4桁） | `7203` | `code` / `display_code` |
   | yfinance | `7203.T` | `ticker` / `ticker_code` |
 
+  英字入りのコード（`285A0` / `285A` / `285A.T`）もある。日本株かどうかの判定・変換は `isdigit()` や正規表現を書かず、`services/stock_code.py`（アプリは `lib/utils/stock_code.dart`）を使う
+
 - bool は `is_` / `has_` / `can_`（Dart は `is` / `has` / `can`）で始める。例：`is_loading`、`hasValidSession`
 - 同じものには、ファイルが違っても同じ名前を使う（バックエンドの `change_pct` を Dart で `changePercent` と呼び替えない。Dart 側で受けるときも JSON のキーはそのまま使う）
 
