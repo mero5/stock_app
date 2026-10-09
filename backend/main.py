@@ -13,6 +13,7 @@ import google.generativeai as genai
 import math
 from fastapi.responses import JSONResponse
 import json
+from config.timeouts import JQUANTS_TIMEOUT, OPENAI_TIMEOUT_SEC, OPENAI_MAX_RETRIES
 
 # ===================================================
 # APIキー設定
@@ -27,7 +28,12 @@ OPENAI_API_KEY  = os.getenv("OPENAI_API_KEY")
 # OpenAI・Geminiクライアント初期化
 # （YouTubeクライアントは routers/youtube.py がリクエストごとに作る）
 # （Geminiのモデルは各routerが genai.GenerativeModel() で都度作るので、ここでは configure だけ）
-openai_client = OpenAI(api_key=OPENAI_API_KEY)
+# timeout / max_retries を指定しないと 600秒 x 最大3回 待つことがある（config/timeouts.py）
+openai_client = OpenAI(
+    api_key=OPENAI_API_KEY,
+    timeout=OPENAI_TIMEOUT_SEC,
+    max_retries=OPENAI_MAX_RETRIES,
+)
 genai.configure(api_key=GEMINI_API_KEY)
 
 
@@ -100,7 +106,8 @@ async def load_stocks_master():
     try:
         res = requests.get(
             "https://api.jquants.com/v2/equities/master",
-            headers={"x-api-key": JQUANTS_API_KEY}
+            headers={"x-api-key": JQUANTS_API_KEY},
+            timeout=JQUANTS_TIMEOUT,
         )
         data = res.json()
         loaded = data.get("data", [])

@@ -1,6 +1,7 @@
 import boto3
 from decimal import Decimal
 from datetime import datetime, timedelta
+from services.clock import now_jst
 
 
 def _to_decimal(obj):
@@ -31,7 +32,7 @@ def cache_get(table, key: dict) -> dict | None:
         if not item:
             return None
         expires_at = item.get('expires_at')
-        if expires_at and datetime.fromisoformat(str(expires_at)) < datetime.now():
+        if expires_at and datetime.fromisoformat(str(expires_at)) < now_jst():
             return None  # TTL切れ
         return _from_decimal({k: v for k, v in item.items()
                                if k not in ('expires_at', 'updated_at')})
@@ -45,8 +46,8 @@ def cache_set(table, key: dict, data: dict, ttl_minutes: int = 60):
         item = {
             **key,
             **data,
-            'updated_at': datetime.now().isoformat(),
-            'expires_at': (datetime.now() + timedelta(minutes=ttl_minutes)).isoformat(),
+            'updated_at': now_jst().isoformat(),
+            'expires_at': (now_jst() + timedelta(minutes=ttl_minutes)).isoformat(),
         }
         table.put_item(Item=_to_decimal(item))
     except Exception as e:
