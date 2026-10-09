@@ -1,5 +1,76 @@
 # バックエンドのデプロイ手順
 
+> **2026-10-09 にバックエンドを EC2 から AWS Lambda（コンテナイメージ＋Function URL）へ移行した（PR #1）。**
+> 現在の手順は「1. Lambda」。「2. 旧EC2」は記録として残している。`deploy.bat` は EC2 用なので、今は使わない。
+
+## 1. Lambda（現在）
+
+### 構成
+
+| 項目 | 値 |
+|---|---|
+| 実行形態 | Lambda コンテナイメージ（`public.ecr.aws/lambda/python:3.12`） |
+| 入口 | `lambda_handler.handler`（Mangum。FastAPI を Lambda のイベントで動かす） |
+| 公開 | Lambda Function URL（アプリの `lib/config/constants.dart` の `backendUrl`） |
+| 依存 | `backend/requirements-lambda.txt` |
+| APIキー | Lambda の環境変数（`JQUANTS_API_KEY` / `YOUTUBE_API_KEY` / `GEMINI_API_KEY` / `OPENAI_API_KEY`）。`.env` はイメージに入れない（`.dockerignore`） |
+| ECR リポジトリ名 | **TODO: 記入する** |
+| Lambda 関数名 | **TODO: 記入する** |
+
+### 手順
+
+`backend/` をビルドコンテキストにしてイメージを作り、ECR に push して Lambda を更新する。
+
+```bash
+# 変数（TODO の値に置き換える）
+ACCOUNT_ID=<AWSアカウントID>
+REGION=ap-northeast-1
+REPO=<ECRリポジトリ名>
+FUNC=<Lambda関数名>
+IMAGE=$ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/$REPO:latest
+
+# 1. ECR にログイン
+aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com
+
+# 2. ビルド（Lambda は x86_64 / arm64 のどちらで作ったかに合わせる）
+docker build --platform linux/amd64 --provenance=false -t $IMAGE backend
+
+# 3. push
+docker push $IMAGE
+
+# 4. Lambda のイメージを更新して、反映を待つ
+aws lambda update-function-code --function-name $FUNC --image-uri $IMAGE --region $REGION
+aws lambda wait function-updated --function-name $FUNC --region $REGION
+
+# 5. 動作確認
+curl -s https://<Function URL>/health
+```
+
+- `--provenance=false` を付けないと、Docker のバージョンによっては Lambda が受け付けない形式のイメージになる
+- `backend/` に新しいフォルダ（`config/` など）を足しても、Dockerfile は `COPY .` なので自動で入る
+
+### 確認しておく Lambda の設定
+
+| 設定 | 推奨 | 理由 |
+|---|---|---|
+| タイムアウト | 60〜120 秒 | 15分（上限）にしておくと、外部APIで詰まったときに15分待ってから失敗する。短くしておけば早く失敗してログで原因を追える。アプリは AI 系を120秒で打ち切る |
+| メモリ | 1024 MB 以上 | pandas・numpy・yfinance を読み込む。Lambda はメモリに比例して CPU も増える |
+| 実行ロール | DynamoDB の `market_cache` / `stock_cache` / `user_profiles` / `ai_predictions` への読み書き | |
+| 環境変数 | 上の4つのAPIキー | |
+
+### ログ
+
+CloudWatch Logs のロググループ `/aws/lambda/<関数名>`。
+
+```bash
+aws logs tail /aws/lambda/<関数名> --follow --region ap-northeast-1
+```
+
+## 2. 旧EC2（〜2026-10-09。記録）
+
+以下は EC2 で運用していたときの手順と経緯。
+
+
 `stock_app` 直下で以下を実行するだけ。
 
 ```bash
