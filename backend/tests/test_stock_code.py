@@ -54,3 +54,18 @@ def test_search_finds_alphanumeric_code(monkeypatch):
         {"code": "285A0", "name": "キオクシアホールディングス", "market": "JP"}
     ]
     assert stock.search("7203")[0]["code"] == "72030"
+
+
+def test_search_falls_back_to_us_when_no_jp_match(monkeypatch):
+    # 「3M」は日本株のコードに無いので、今までどおり米国株を探す
+    import routers.stock as stock
+
+    class FakeSearch:
+        def __init__(self, q, **kwargs):
+            self.quotes = [{"symbol": "MMM", "longname": "3M Company"}]
+
+    monkeypatch.setattr(stock, "stocks_master", [{"Code": "72030", "CoName": "トヨタ自動車"}])
+    monkeypatch.setattr(stock.yf, "Search", FakeSearch)
+    assert stock.search("3M") == [{"code": "MMM", "name": "3M Company", "market": "US"}]
+    # 数字だけなら米国株は探さない
+    assert stock.search("9999") == []

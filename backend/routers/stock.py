@@ -56,7 +56,10 @@ def search(q: str):
             code = s.get("Code", "")
             if code.startswith(prefix):
                 results.append({"code": code, "name": s.get("CoName", code), "market": "JP"})
-        return results[:20]
+        # 数字だけなら日本株のコードとして終わり。
+        # 「3M」のように英字を含むものは、日本株で見つからなければ米国株も探す
+        if results or q.isdigit():
+            return results[:20]
 
     # 英語 → yfinanceで米国株検索
     try:
