@@ -6,7 +6,7 @@ from fastapi import APIRouter
 from services.cache import stock_cache_table, cache_get, cache_set
 from config.timeouts import JQUANTS_TIMEOUT
 from services.clock import JST
-from services.market_data import drop_empty_rows
+from services.market_data import drop_empty_rows, first_earnings_date
 
 
 # main.pyから注入される変数
@@ -359,21 +359,18 @@ def get_stock_events(codes: str):
             else:
                 # 米国株はyfinanceから
                 try:
-                    cal = ticker.calendar
-                    if cal is not None and not cal.empty:
-                        ed = cal.get("Earnings Date")
-                        if ed is not None and len(ed) > 0:
-                            earnings_date = str(ed.iloc[0].date()) if hasattr(ed.iloc[0], 'date') else str(ed.iloc[0])
-                            result.append({
-                                "code": code,
-                                "name": name,
-                                "date": earnings_date,
-                                "type": "earnings",
-                                "label": f"{name} 決算発表",
-                                "color": "red",
-                            })
-                except Exception:
-                    pass
+                    earnings_date = first_earnings_date(ticker.calendar)
+                    if earnings_date:
+                        result.append({
+                            "code": code,
+                            "name": name,
+                            "date": earnings_date,
+                            "type": "earnings",
+                            "label": f"{name} 決算発表",
+                            "color": "red",
+                        })
+                except Exception as e:
+                    print(f"米国株の決算日取得エラー {code}: {e}")
 
             # 配当関連（yfinance）
             try:
