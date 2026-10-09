@@ -17,6 +17,7 @@ import 'package:amplify_flutter/amplify_flutter.dart';
 import '../viewmodels/home_viewmodel.dart';
 import '../models/stock.dart';
 import '../services/stock_service.dart';
+import '../services/watchlist_service.dart';
 import '../utils/formatter.dart';
 import 'login_screen.dart';
 import 'search_screen.dart';
@@ -27,6 +28,7 @@ import 'market_screen.dart';
 import 'settings_screen.dart';
 import 'portfolio_screen.dart';
 import '../widgets/api_error_banner.dart';
+import '../widgets/error_dialog.dart';
 import '../widgets/notice_dialog.dart';
 import 'package:provider/provider.dart';
 import '../viewmodels/detail_viewmodel.dart';
@@ -479,7 +481,13 @@ class _HomeScreenState extends State<HomeScreen> {
             child: SizedBox(
               width: double.infinity,
               child: ElevatedButton.icon(
-                onPressed: () => context.read<HomeViewModel>().deleteSelected(),
+                onPressed: () async {
+                  final failure =
+                      await context.read<HomeViewModel>().deleteSelected();
+                  if (failure != null && context.mounted) {
+                    await _showWatchlistError(failure);
+                  }
+                },
                 icon: const Icon(Icons.delete),
                 label: Text('${vm.selectedCodes.length}件削除'),
                 style: ElevatedButton.styleFrom(
@@ -496,6 +504,17 @@ class _HomeScreenState extends State<HomeScreen> {
   // ============================================================
   // メインのbuild
   // ============================================================
+
+  /// ウォッチリストの保存・削除に失敗したときのポップアップ
+  Future<void> _showWatchlistError(Object error) {
+    return ErrorDialog.show(
+      context,
+      message: error is WatchlistException
+          ? error.message
+          : 'ウォッチリストの更新に失敗しました。時間をおいてもう一度お試しください。',
+      detail: error is WatchlistException ? error.detail : '$error',
+    );
+  }
 
   @override
   Widget build(BuildContext context) {

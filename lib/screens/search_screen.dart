@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../models/stock.dart';
 import '../services/stock_service.dart';
 import '../services/watchlist_service.dart';
+import '../widgets/error_dialog.dart';
 import 'dart:async';
 import 'package:provider/provider.dart';
 import '../viewmodels/detail_viewmodel.dart';
@@ -84,11 +85,16 @@ class _SearchScreenState extends State<SearchScreen> {
         Navigator.pop(context);
       }
     } catch (e) {
-      print("追加エラー: $e");
+      debugPrint("追加エラー: $e");
+      // 失敗したら必ずポップアップで知らせる（画面は閉じずに、もう一度押せるようにする）
       if (mounted) {
-        ScaffoldMessenger.of(
+        await ErrorDialog.show(
           context,
-        ).showSnackBar(SnackBar(content: Text("追加エラー: $e")));
+          message: e is WatchlistException
+              ? e.message
+              : '銘柄の追加に失敗しました。時間をおいてもう一度お試しください。',
+          detail: e is WatchlistException ? e.detail : '$e',
+        );
       }
     } finally {
       if (mounted) setState(() => _isAdding = false);
