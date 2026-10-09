@@ -178,5 +178,7 @@ stock_app のコードの書き方の決まり。**コードを変える前に�
 ## 9. 自動チェック（CI）
 
 - PR #21（`chore/ci-unit-tests`）で、PR のたびに GitHub Actions が `pytest`（backend）と `flutter analyze` / `flutter test` を自動で実行する。**CI が赤（失敗）のPRはマージしない**
+- **GitHub のルールセット「main を守る（CI が通るまでマージ不可）」で強制している。** `backend（pytest）` と `flutter（analyze・test）` の2つが緑にならないと、PR のマージボタンが押せない。main への直接 push・main の削除・強制 push もできない
+- **`ci.yml` のジョブ名（`name:`）を変えたら、ルールセットの必須チェック名も同じ PR のマージ前に直す。** 直さないと、存在しないチェックを待ち続けて、どの PR もマージできなくなる（Settings → Rules → Rulesets）
 - 自動整形（Python：`ruff`、Dart：`dart format`）はまだ入れていない。全ファイルの書き方が一気に変わり、開いているPRが全部コンフリクトするため、**開いているPRが無いときに別PRで** CI に追加する予定
 - 入れたら、この章を「CI で自動チェックしている内容」に書き換える
