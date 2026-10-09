@@ -182,3 +182,12 @@ stock_app のコードの書き方の決まり。**コードを変える前に�
 - PR #21（`chore/ci-unit-tests`）で、PR のたびに GitHub Actions が `pytest`（backend）と `flutter analyze` / `flutter test` を自動で実行する。**CI が赤（失敗）のPRはマージしない**
 - 自動整形（Python：`ruff`、Dart：`dart format`）はまだ入れていない。全ファイルの書き方が一気に変わり、開いているPRが全部コンフリクトするため、**開いているPRが無いときに別PRで** CI に追加する予定
 - 入れたら、この章を「CI で自動チェックしている内容」に書き換える
+- **`ci.yml` のジョブ名（`name:`）を変えない。** GitHub のルールセット「main を守る」で `backend（pytest）` と `flutter（analyze・test）` が必須チェックになっている。名前を変えると必須チェックが来なくなり、すべてのPRがマージできなくなる。変えるときはルールセットも同時に直す
+
+### PRのプレビュー（Web版で画面を確認する）
+
+- PR に **`preview` ラベル**を付けると、`.github/workflows/preview.yml` がそのPRのコードで Flutter Web版をビルドし、Firebase Hosting のプレビュー用URL（PRごと・7日で自動削除）に公開する。URL は PR のコメントに書き込まれる。ラベルが付いている間は push のたびに更新される
+- 画面・表示の変更をしたPRは、レビューしやすいように `preview` ラベルを付ける
+- **接続先は本番のAPI・本番のデータ。** 確認はテスト用アカウントで行う。AI分析ボタンを押すと OpenAI の料金がかかる。バックエンドの変更はデプロイされるまで反映されない
+- Webで動かないもの（`dart:io` の `Platform` など）を `lib/` に足すと、プレビューと E2E の画面テストが動かなくなる。使うときは `kIsWeb` で分ける
+- 必要な Secrets：`FIREBASE_SERVICE_ACCOUNT`（サービスアカウントの鍵のJSON）・`FIREBASE_PROJECT_ID`

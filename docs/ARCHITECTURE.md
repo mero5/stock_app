@@ -160,6 +160,8 @@ models/       データの型（Stock など）
 | 画面の文言（ボタン名など） | E2Eの画面テスト（`stock-app-e2e`） |
 | ユーザーに見える変更 | `config/notices.py` にお知らせを追加 |
 | 依存ライブラリ | `requirements.txt` **と** `requirements-lambda.txt` |
+| Flutter のバージョン | `.github/workflows/ci.yml` ⇔ `.github/workflows/preview.yml` ⇔ E2E の `e2e.yml`（`stock-app-e2e`） |
+| `ci.yml` のジョブ名 | GitHub のルールセット「main を守る」の必須チェック（名前が合わないと全PRがマージ不可） |
 
 新しく連動する箇所ができたら、この表に追記する。
 
