@@ -44,3 +44,25 @@ def first_earnings_date(calendar):
     if hasattr(first, "hour") and hasattr(first, "date"):
         first = first.date()
     return str(first)[:10]
+
+
+def dividend_yield_pct(info: dict):
+    """
+    yfinance の info から配当利回りを「%」で返す（例：3.44 は 3.44%）。分からなければ None
+
+    yfinance の dividendYield は、0.2.5x 以降の版で単位が「割合（0.0344）」から「%（3.44）」に変わった。
+    以前は割合のつもりで ×100 していたため、トヨタが「344%」になっていた（K-46）。
+    版によって単位が変わる値には頼らず、年間配当額（dividendRate）÷ 株価で計算する。
+    年間配当額が無いときだけ dividendYield（今の版の「%」）を使う。
+    """
+    info = info or {}
+    rate = info.get("dividendRate")
+    price = info.get("currentPrice") or info.get("regularMarketPrice") or info.get("previousClose")
+    try:
+        if rate is not None and price:
+            return round(float(rate) / float(price) * 100, 2)
+        if info.get("dividendYield") is not None:
+            return round(float(info["dividendYield"]), 2)
+    except (TypeError, ValueError, ZeroDivisionError) as e:
+        print(f"配当利回りの計算エラー: {e}")
+    return None

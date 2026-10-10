@@ -7,7 +7,7 @@ from fastapi import APIRouter
 from services.cache import stock_cache_table, cache_get, cache_set
 from config.timeouts import JQUANTS_TIMEOUT
 from services.clock import JST
-from services.market_data import drop_empty_rows, first_earnings_date
+from services.market_data import drop_empty_rows, first_earnings_date, dividend_yield_pct
 from services.stock_code import is_jp_code, to_yf_ticker, to_jquants_code
 
 
@@ -25,6 +25,11 @@ router = APIRouter()
 # ===================================================
 # ユーティリティ関数
 # ===================================================
+def _pct_to_ratio(pct):
+    """% を割合にする（3.44 → 0.0344）。None はそのまま"""
+    return None if pct is None else round(pct / 100, 6)
+
+
 # NaN値をNoneに変換（JSONシリアライズエラー防止）
 def clean_value(v):
     if isinstance(v, float) and math.isnan(v):
@@ -272,7 +277,9 @@ def get_stock_detail(code: str):
             "per": clean_value(info.get("trailingPE")),
             "pbr": clean_value(info.get("priceToBook")),
             "market_cap": clean_value(info.get("marketCap")),
-            "dividend_yield": clean_value(info.get("dividendYield")),
+            # アプリは割合（0.0344）として受け取って ×100 して表示するので、% を割合に直して返す。
+            # 以前は yfinance の値（今の版は %）をそのまま返していて「344.00%」と表示されていた（K-46）
+            "dividend_yield": _pct_to_ratio(dividend_yield_pct(info)),
             "roe": clean_value(info.get("returnOnEquity")),
             "roa": clean_value(info.get("returnOnAssets")),
             "revenue_growth": clean_value(info.get("revenueGrowth")),

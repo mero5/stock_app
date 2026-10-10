@@ -21,7 +21,7 @@ from services.technical import (
     resolve_sector_trend, normalize_checks, PROMPT_VERSION
 )
 from services.predictions import save_prediction, resolve_horizon_days
-from services.market_data import drop_empty_rows
+from services.market_data import drop_empty_rows, dividend_yield_pct
 from services.stock_code import to_yf_ticker
 import math
 from fastapi.responses import JSONResponse
@@ -271,7 +271,7 @@ async def get_ai_analysis(code: str):
         per            = clean_value(info.get("trailingPE"))
         pbr            = clean_value(info.get("priceToBook"))
         market_cap     = clean_value(info.get("marketCap"))
-        dividend_yield = clean_value(info.get("dividendYield"))
+        dividend_yield = dividend_yield_pct(info)  # %（K-46：yfinance の版で単位が変わるため計算で出す）
         roe            = clean_value(info.get("returnOnEquity"))
         revenue_growth = clean_value(info.get("revenueGrowth"))
         name           = info.get("longName") or info.get("shortName") or code
@@ -292,7 +292,7 @@ MACD: {macd}
 52週高値: {high52} / 52週安値: {low52}
 PER: {per} / PBR: {pbr}
 時価総額: {market_cap}
-配当利回り: {dividend_yield}
+配当利回り: {dividend_yield}%
 ROE: {roe}
 売上成長率: {revenue_growth}
 
