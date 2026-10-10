@@ -6,9 +6,9 @@ from concurrent.futures import ThreadPoolExecutor
 import yfinance as yf
 from fastapi import APIRouter
 from services.cache import stock_cache_table, cache_get, cache_set
-from config.timeouts import JQUANTS_TIMEOUT
-from services.clock import JST
-from services.market_data import drop_empty_rows, first_earnings_date
+from services.clock import JST, today_jst
+from services.jp_earnings import get_jp_earnings_dates
+from services.market_data import drop_empty_rows, first_earnings_date, dividend_yield_pct, week52_range
 from services.stock_code import is_jp_code, to_yf_ticker, to_jquants_code
 from services.stock_logo import get_logo_url
 
@@ -27,6 +27,11 @@ router = APIRouter()
 # ===================================================
 # ユーティリティ関数
 # ===================================================
+def _pct_to_ratio(pct):
+    """% を割合にする（3.44 → 0.0344）。None はそのまま"""
+    return None if pct is None else round(pct / 100, 6)
+
+
 # NaN値をNoneに変換（JSONシリアライズエラー防止）
 def clean_value(v):
     if isinstance(v, float) and math.isnan(v):
@@ -250,6 +255,8 @@ def get_stock_detail(code: str):
             change = None
             change_pct = None
         
+        week52 = week52_range(info, [c["high"] for c in candles], [c["low"] for c in candles])
+
         # ニュース取得
         try:
             news_raw = ticker.news or []
@@ -274,11 +281,17 @@ def get_stock_detail(code: str):
             "per": clean_value(info.get("trailingPE")),
             "pbr": clean_value(info.get("priceToBook")),
             "market_cap": clean_value(info.get("marketCap")),
-            "dividend_yield": clean_value(info.get("dividendYield")),
+            # アプリは割合（0.0344）として受け取って ×100 して表示するので、% を割合に直して返す。
+            # 以前は yfinance の値（今の版は %）をそのまま返していて「344.00%」と表示されていた（K-46）
+            "dividend_yield": _pct_to_ratio(dividend_yield_pct(info)),
             "roe": clean_value(info.get("returnOnEquity")),
             "roa": clean_value(info.get("returnOnAssets")),
             "revenue_growth": clean_value(info.get("revenueGrowth")),
             "debt_to_equity": clean_value(info.get("debtToEquity")),
+            # 本当の52週の高値・安値（詳細画面の「52週価格帯」用）。
+            # 以前の画面は3か月分のローソク足から計算していた（K-50）
+            "week52_high": clean_value(week52[0]),
+            "week52_low": clean_value(week52[1]),
             "news": news,
             "candles": [
                 {k: clean_value(v) for k, v in c.items()}
@@ -404,30 +417,23 @@ def get_stock_events(codes: str):
             info = ticker.info
             name = info.get("longName") or info.get("shortName") or code
 
-            # 決算発表日（日本株はJ-Quantsから取得）
+            # 決算発表日（日本株はJ-Quantsの決算発表予定日 → services/jp_earnings.py）
             if is_jp_code(code):
                 try:
-                    res = requests.get(
-                        "https://api.jquants.com/v2/fins/announcement",
-                        headers={"x-api-key": JQUANTS_API_KEY},
-                        params={"code": to_jquants_code(code)},
-                        timeout=JQUANTS_TIMEOUT,
+                    dates = get_jp_earnings_dates(
+                        to_jquants_code(code), JQUANTS_API_KEY, str(today_jst())
                     )
-                    data = res.json()
-                    announcements = data.get("announcement", [])
-                    for ann in announcements[:2]:
-                        date_str = ann.get("AnnouncementDate", "")
-                        if date_str:
-                            result.append({
-                                "code": code,
-                                "name": name,
-                                "date": date_str[:10],
-                                "type": "earnings",
-                                "label": f"{name} 決算発表",
-                                "color": "red",
-                            })
+                    for date_str in dates:
+                        result.append({
+                            "code": code,
+                            "name": name,
+                            "date": date_str,
+                            "type": "earnings",
+                            "label": f"{name} 決算発表",
+                            "color": "red",
+                        })
                 except Exception as e:
-                    print(f"J-Quants決算取得エラー: {e}")
+                    print(f"J-Quants決算取得エラー {code}: {e}")
             else:
                 # 米国株はyfinanceから
                 try:

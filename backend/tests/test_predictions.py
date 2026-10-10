@@ -189,3 +189,52 @@ def test_evaluate_pending_handles_scan_error(monkeypatch):
     res = predictions.evaluate_pending()
     assert res["evaluated"] == 0
     assert "boom" in res["error"]
+
+
+# ---------------------------------------------------
+# get_recent_predictions：成績画面の履歴は自分の予測だけ（K-48）
+# ---------------------------------------------------
+HISTORY = [
+    {"code": "7203", "predicted_at": "2026-10-03T10:00", "user_id": "me", "status": "pending"},
+    {"code": "6758", "predicted_at": "2026-10-04T10:00", "user_id": "other", "status": "pending"},
+    {"code": "7203", "predicted_at": "2026-10-01T10:00", "status": "pending"},   # user_id を記録する前の古い予測
+    {"code": "7203", "predicted_at": "2026-10-05T10:00", "user_id": "other", "status": "pending"},
+]
+
+
+def test_recent_predictions_only_own(monkeypatch):
+    monkeypatch.setattr(predictions, "_scan_all", lambda *a, **k: list(HISTORY))
+    got = predictions.get_recent_predictions(limit=10, user_id="me")
+    assert [p["predicted_at"] for p in got] == ["2026-10-03T10:00", "2026-10-01T10:00"]
+
+
+def test_recent_predictions_own_and_code(monkeypatch):
+    monkeypatch.setattr(predictions, "_scan_all", lambda *a, **k: list(HISTORY))
+    got = predictions.get_recent_predictions(limit=1, code="7203", user_id="me")
+    assert [p["predicted_at"] for p in got] == ["2026-10-03T10:00"]
+
+
+def test_recent_predictions_without_user_returns_all(monkeypatch):
+    # 古いアプリ（userId を送らない）には今までどおり全件を返す
+    monkeypatch.setattr(predictions, "_scan_all", lambda *a, **k: list(HISTORY))
+    assert len(predictions.get_recent_predictions(limit=10)) == 4
+
+
+
+def test_stats_api_uses_token_user_when_user_id_missing(monkeypatch):
+    # userId を送らない古いアプリでも、トークンの持ち主で絞る
+    from types import SimpleNamespace
+    import routers.stats as stats
+    from services.auth import AuthResult
+
+    calls = {}
+    monkeypatch.setattr(stats, "get_recent_predictions",
+                        lambda limit, code, user_id: calls.setdefault("user_id", user_id) and [])
+    req = SimpleNamespace(state=SimpleNamespace(auth=AuthResult("valid", user_id="sub-123")))
+    stats.list_predictions(req, limit=30, code="", userId="")
+    assert calls["user_id"] == "sub-123"
+
+    calls.clear()
+    req = SimpleNamespace(state=SimpleNamespace(auth=AuthResult("none")))
+    stats.list_predictions(req, limit=30, code="", userId="")
+    assert calls["user_id"] == ""
