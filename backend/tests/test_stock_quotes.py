@@ -22,11 +22,14 @@ def test_quotes_returns_name_and_price_in_request_order(monkeypatch):
     monkeypatch.setattr(stock, "get_stock_name", _fake_name)
     monkeypatch.setattr(stock, "get_stock_price", _fake_price)
     monkeypatch.setattr(stock, "ensure_stocks_master", lambda: None)
+    monkeypatch.setattr(stock, "get_logo_url", lambda code: f"logo:{code}" if code == "AAPL" else None)
 
     result = stock.get_stock_quotes("AAPL, 72030,,")
     assert result == {"quotes": [
-        {"code": "AAPL", "name": "Apple Inc.", "price": 100.0, "change": 1.0, "change_pct": 1.01},
-        {"code": "72030", "name": "トヨタ自動車", "price": 100.0, "change": 1.0, "change_pct": 1.01},
+        {"code": "AAPL", "name": "Apple Inc.", "price": 100.0, "change": 1.0, "change_pct": 1.01,
+         "logo_url": "logo:AAPL"},
+        {"code": "72030", "name": "トヨタ自動車", "price": 100.0, "change": 1.0, "change_pct": 1.01,
+         "logo_url": None},
     ]}
 
 
@@ -34,9 +37,11 @@ def test_one_failure_does_not_break_others(monkeypatch):
     monkeypatch.setattr(stock, "get_stock_name", _fake_name)
     monkeypatch.setattr(stock, "get_stock_price", _fake_price)
     monkeypatch.setattr(stock, "ensure_stocks_master", lambda: None)
+    monkeypatch.setattr(stock, "get_logo_url", lambda code: None)
 
     quotes = stock.get_stock_quotes("BROKEN,72030")["quotes"]
-    assert quotes[0] == {"code": "BROKEN", "name": "BROKEN", "price": None, "change": None, "change_pct": None}
+    assert quotes[0] == {"code": "BROKEN", "name": "BROKEN", "price": None, "change": None, "change_pct": None,
+                         "logo_url": None}
     assert quotes[1]["price"] == 100.0
 
 
@@ -49,6 +54,7 @@ def test_codes_are_capped(monkeypatch):
     monkeypatch.setattr(stock, "get_stock_name", _fake_name)
     monkeypatch.setattr(stock, "get_stock_price", _fake_price)
     monkeypatch.setattr(stock, "ensure_stocks_master", lambda: None)
+    monkeypatch.setattr(stock, "get_logo_url", lambda code: None)
 
     codes = ",".join(str(10000 + i) for i in range(stock.QUOTES_MAX_CODES + 5))
     assert len(stock.get_stock_quotes(codes)["quotes"]) == stock.QUOTES_MAX_CODES

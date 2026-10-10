@@ -28,6 +28,7 @@ import 'market_screen.dart';
 import 'settings_screen.dart';
 import 'portfolio_screen.dart';
 import '../widgets/api_error_banner.dart';
+import '../widgets/stock_logo.dart';
 import '../widgets/error_dialog.dart';
 import '../widgets/notice_dialog.dart';
 import 'package:provider/provider.dart';
@@ -417,7 +418,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 final isSelected = vm.selectedCodes.contains(stock.displayCode);
 
                 return ListTile(
-                  // 編集モード時はチェックボックス、通常時はチャートアイコン
+                  // 編集モード時はチェックボックス、通常時は銘柄の画像（無ければ頭文字）
                   leading: vm.editMode
                       ? Checkbox(
                           value: isSelected,
@@ -425,7 +426,7 @@ class _HomeScreenState extends State<HomeScreen> {
                               .read<HomeViewModel>()
                               .toggleSelect(stock.displayCode),
                         )
-                      : const Icon(Icons.show_chart),
+                      : StockLogo(name: stock.name, logoUrl: stock.logoUrl),
                   title: Text(stock.name),
                   subtitle: Text(stock.displayCode),
                   trailing: vm.editMode

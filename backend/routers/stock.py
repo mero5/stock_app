@@ -10,6 +10,7 @@ from services.clock import JST, today_jst
 from services.jp_earnings import get_jp_earnings_dates
 from services.market_data import drop_empty_rows, first_earnings_date, dividend_yield_pct, week52_range
 from services.stock_code import is_jp_code, to_yf_ticker, to_jquants_code
+from services.stock_logo import get_logo_url
 
 
 # main.pyから注入される変数
@@ -371,6 +372,8 @@ def _quote(code: str) -> dict:
         "price": price.get("price"),
         "change": price.get("change"),
         "change_pct": price.get("change_pct"),
+        # ホームの銘柄の左に出す画像（会社の Web サイトのアイコン）。分からなければ null
+        "logo_url": get_logo_url(code),
     }
 
 
@@ -379,7 +382,7 @@ def get_stock_quotes(codes: str):
     """
     ウォッチリストの銘柄名・株価・前日比をまとめて返す（ホーム画面用）
     codes: カンマ区切りの銘柄コード（例: 72030,285A0,AAPL）。上限 QUOTES_MAX_CODES 件
-    戻り値: {"quotes": [{code, name, price, change, change_pct}, ...]}（codes と同じ順）
+    戻り値: {"quotes": [{code, name, price, change, change_pct, logo_url}, ...]}（codes と同じ順）
     取れなかった項目は null（名前はコード）。1銘柄の失敗で全体を失敗にしない
     """
     code_list = [c.strip() for c in codes.split(",") if c.strip()][:QUOTES_MAX_CODES]
