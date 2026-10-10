@@ -7,7 +7,8 @@
 // これらは秘密の値ではない（アプリの中に入って配られるもの。送信に使う秘密の鍵は
 // バックエンドの SSM パラメータストアにある）。
 //
-// 空のままだとプッシュ通知の準備をしない（アプリはそれ以外いつもどおり動く）。
+// 値を空にするとプッシュ通知の準備をしない（アプリはそれ以外いつもどおり動く）。
+// プロジェクトは Web版プレビューと同じ stock-app-preview（2026-10-11 に iOS アプリを登録）。
 // Android・Web は今は対応しない（iPhone だけ）。
 // ============================================================
 
@@ -17,10 +18,10 @@ class FirebaseConfig {
   FirebaseConfig._();
 
   static const FirebaseOptions ios = FirebaseOptions(
-    apiKey: '',
-    appId: '',
-    messagingSenderId: '',
-    projectId: '',
+    apiKey: 'AIzaSyA-AMIqlndCMHCDB0G7ENnIa7OF9whhJZY',
+    appId: '1:289901141481:ios:2b840b24802d92ebe83f78',
+    messagingSenderId: '289901141481',
+    projectId: 'stock-app-preview',
     iosBundleId: 'com.example.StockAnalysisApp',
   );
 
