@@ -1,0 +1,170 @@
+/* ===================================================
+   WebView 画面の共通デザイン
+
+   アプリの lib/theme/app_theme.dart（AppTheme）と同じ色・文字・角丸を使う。
+   どちらかの色を変えたら、もう片方も合わせて直す（docs/ARCHITECTURE.md の「ここを変えたら」）。
+   方針：白背景＋黒文字＋青・緑の差し色。影は付けず、細い線で区切る。
+   上昇=赤・下落=緑（日本株の慣例）。
+   =================================================== */
+
+:root {
+  --bg: #FAFAF7;
+  --surface: #FFFFFF;
+  --hairline: #E6E6E1;
+  --text: #0B0F14;
+  --text-secondary: #4A5260;
+  --text-tertiary: #6E7582;
+  --text-disabled: #A6AAAD;
+  --primary: #1D4ED8;
+  --primary-light: #EFF4FF;
+  --accent: #047857;
+  --bullish: #D64545;
+  --bearish: #1E9E62;
+  --warning: #C77D0A;
+
+  --radius-md: 8px;
+  --radius-lg: 10px;
+  --radius-xl: 12px;
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 12px;
+  --space-lg: 16px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Hiragino Kaku Gothic ProN",
+    "Noto Sans JP", "Yu Gothic", sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  /* 数字を等幅にして、株価・騰落率の桁をそろえる */
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+  padding: var(--space-lg) var(--space-lg) calc(var(--space-lg) + env(safe-area-inset-bottom));
+}
+
+/* ---------- カード ---------- */
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-xl);
+  padding: var(--space-lg);
+  margin-bottom: var(--space-md);
+}
+
+.card-title {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-sm);
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.card-title::before {
+  /* 見出しの左の細い縦線（補助の差し色） */
+  content: "";
+  flex: 0 0 3px;
+  align-self: stretch;
+  border-radius: 2px;
+  background: var(--accent);
+}
+
+.card-date {
+  margin: var(--space-xs) 0 0 11px;
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.section-heading {
+  margin: 10px 0 6px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--primary);
+}
+
+.section-heading:first-child {
+  margin-top: 0;
+}
+
+.bullets {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.bullets li {
+  position: relative;
+  padding-left: 1em;
+  margin-bottom: 10px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.bullets li::before {
+  content: "・";
+  position: absolute;
+  left: 0;
+}
+
+.card-body {
+  margin-top: var(--space-md);
+}
+
+.card-footer {
+  margin-top: var(--space-xs);
+  padding-top: 10px;
+  border-top: 1px solid var(--hairline);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  white-space: pre-line;
+}
+
+/* ---------- 状態（読み込み中・空・エラー） ---------- */
+
+.state {
+  padding: 32px;
+  text-align: center;
+  color: var(--text-tertiary);
+  white-space: pre-line;
+}
+
+.spinner {
+  width: 28px;
+  height: 28px;
+  margin: 48px auto;
+  border: 3px solid var(--primary-light);
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ---------- 上昇・下落（これから移す画面で使う） ---------- */
+
+.up {
+  color: var(--bullish);
+}
+
+.down {
+  color: var(--bearish);
+}

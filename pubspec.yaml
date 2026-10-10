@@ -45,6 +45,8 @@ dependencies:
   url_launcher: ^6.3.1
   firebase_core: ^4.15.0
   firebase_messaging: ^16.7.0
+  # 画面の一部をバックエンドのHTML（/web/...）で表示し、アプリのリリース無しで直せるようにするため
+  webview_flutter: ^4.14.1
 
 dev_dependencies:
   flutter_test:

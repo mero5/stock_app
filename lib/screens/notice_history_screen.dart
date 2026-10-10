@@ -5,12 +5,18 @@
 // ポップアップを閉じてしまっても、ここから読み直せる。
 // 内容はバックエンド（/notices）から取得するので、
 // ポップアップと常に同じものが表示される。
+//
+// バックエンドの設定（/app/config）で WebView 版がオンなら、中身は
+// バックエンドのHTML（/web/notices）で表示する（AppConfigService・WebPageView）。
+// 表示する内容はネイティブ版と同じ。
 // ============================================================
 
 import 'package:flutter/material.dart';
 
+import '../services/app_config_service.dart';
 import '../services/notice_service.dart';
 import '../widgets/notice_dialog.dart';
+import '../widgets/web_page_view.dart';
 
 class NoticeHistoryScreen extends StatefulWidget {
   const NoticeHistoryScreen({super.key});
@@ -23,10 +29,14 @@ class _NoticeHistoryScreenState extends State<NoticeHistoryScreen> {
   List<Notice> _notices = [];
   bool _isLoading = true;
 
+  /// WebView 版で表示するか（開いたときに1回だけ決める）
+  final bool _useWeb = AppConfigService.useWeb(WebScreen.noticeHistory);
+  final _webKey = GlobalKey<WebPageViewState>();
+
   @override
   void initState() {
     super.initState();
-    _load();
+    if (!_useWeb) _load();
   }
 
   Future<void> _load() async {
@@ -42,6 +52,7 @@ class _NoticeHistoryScreenState extends State<NoticeHistoryScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (_useWeb) return _buildWeb();
     return Scaffold(
       appBar: AppBar(
         title: const Text('お知らせ履歴'),
@@ -72,6 +83,23 @@ class _NoticeHistoryScreenState extends State<NoticeHistoryScreen> {
               itemCount: _notices.length,
               itemBuilder: (context, index) => _buildCard(_notices[index]),
             ),
+    );
+  }
+
+  /// WebView 版（中身は backend/web/pages/notices.html）
+  Widget _buildWeb() {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('お知らせ履歴'),
+        actions: [
+          IconButton(
+            tooltip: '再読み込み',
+            icon: const Icon(Icons.refresh),
+            onPressed: () => _webKey.currentState?.reload(),
+          ),
+        ],
+      ),
+      body: WebPageView(key: _webKey, path: '/web/notices'),
     );
   }
 
