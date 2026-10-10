@@ -20,6 +20,7 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import '../config/constants.dart';
+import '../config/timeouts.dart';
 
 class UserProfileService {
   // ============================================================
@@ -37,7 +38,7 @@ class UserProfileService {
     try {
       final res = await http.get(
         Uri.parse('${Constants.backendUrl}/user/profile?userId=$userId'),
-      );
+      ).timeout(AppTimeouts.api);
 
       final data = jsonDecode(res.body) as Map<String, dynamic>;
 
@@ -75,7 +76,7 @@ class UserProfileService {
         headers: {'Content-Type': 'application/json'},
         // userIdとprofileの内容をマージして送信
         body: jsonEncode({'userId': userId, ...profile}),
-      );
+      ).timeout(AppTimeouts.api);
 
       final data = jsonDecode(res.body) as Map<String, dynamic>;
 

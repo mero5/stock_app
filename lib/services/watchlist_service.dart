@@ -18,6 +18,7 @@ import 'package:amplify_flutter/amplify_flutter.dart';
 import 'package:http/http.dart' as http;
 import '../config/constants.dart';
 import '../utils/stock_code.dart';
+import '../config/timeouts.dart';
 
 class WatchlistService {
   // ============================================================
@@ -65,7 +66,7 @@ class WatchlistService {
       Uri.parse(Constants.saveUrl),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({'userId': user.userId, 'stocks': normalized}),
-    );
+    ).timeout(AppTimeouts.api);
     _checkResponse(response, '保存');
   }
 
@@ -91,7 +92,7 @@ class WatchlistService {
       Uri.parse(Constants.deleteUrl),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({'userId': user.userId, 'stock': normalized}),
-    );
+    ).timeout(AppTimeouts.api);
 
     // デバッグ用：削除結果をログに出力
     // debugPrintはリリースビルドでは出力されない
@@ -116,7 +117,7 @@ class WatchlistService {
     // LambdaにGETリクエストを送信
     final response = await http.get(
       Uri.parse('${Constants.getUrl}?userId=${user.userId}'),
-    );
+    ).timeout(AppTimeouts.api);
 
     // レスポンスをパースして銘柄コードのリストに変換
     final data = jsonDecode(response.body);
