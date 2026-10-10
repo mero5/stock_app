@@ -5,8 +5,8 @@ import requests
 import yfinance as yf
 from fastapi import APIRouter
 from services.cache import stock_cache_table, cache_get, cache_set
-from config.timeouts import JQUANTS_TIMEOUT
-from services.clock import JST
+from services.clock import JST, today_jst
+from services.jp_earnings import get_jp_earnings_dates
 from services.market_data import drop_empty_rows, first_earnings_date
 from services.stock_code import is_jp_code, to_yf_ticker, to_jquants_code
 
@@ -350,30 +350,23 @@ def get_stock_events(codes: str):
             info = ticker.info
             name = info.get("longName") or info.get("shortName") or code
 
-            # 決算発表日（日本株はJ-Quantsから取得）
+            # 決算発表日（日本株はJ-Quantsの決算発表予定日 → services/jp_earnings.py）
             if is_jp_code(code):
                 try:
-                    res = requests.get(
-                        "https://api.jquants.com/v2/fins/announcement",
-                        headers={"x-api-key": JQUANTS_API_KEY},
-                        params={"code": to_jquants_code(code)},
-                        timeout=JQUANTS_TIMEOUT,
+                    dates = get_jp_earnings_dates(
+                        to_jquants_code(code), JQUANTS_API_KEY, str(today_jst())
                     )
-                    data = res.json()
-                    announcements = data.get("announcement", [])
-                    for ann in announcements[:2]:
-                        date_str = ann.get("AnnouncementDate", "")
-                        if date_str:
-                            result.append({
-                                "code": code,
-                                "name": name,
-                                "date": date_str[:10],
-                                "type": "earnings",
-                                "label": f"{name} 決算発表",
-                                "color": "red",
-                            })
+                    for date_str in dates:
+                        result.append({
+                            "code": code,
+                            "name": name,
+                            "date": date_str,
+                            "type": "earnings",
+                            "label": f"{name} 決算発表",
+                            "color": "red",
+                        })
                 except Exception as e:
-                    print(f"J-Quants決算取得エラー: {e}")
+                    print(f"J-Quants決算取得エラー {code}: {e}")
             else:
                 # 米国株はyfinanceから
                 try:
