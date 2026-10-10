@@ -7,7 +7,7 @@ from services.cache import (
     cache_get, cache_set,
     market_cache_table, stock_cache_table
 )
-from services.market_data import drop_empty_rows
+from services.market_data import drop_empty_rows, dividend_yield_pct
 import math
 
 
@@ -297,12 +297,17 @@ def get_technical_data(ticker_code: str) -> dict:
         return {}
 
 
+# ファンダメンタルのキャッシュの種類名。中身の形・単位を変えたら版を上げる
+FUNDAMENTAL_CACHE_TYPE = 'fundamental_v2'
+
+
 def get_fundamental_data(ticker_code: str) -> dict:
     """
     ファンダメンタル指標を取得（DynamoDBに24時間キャッシュ）
     """
     # キャッシュ確認
-    cached = cache_get(stock_cache_table, {'code': ticker_code, 'cache_type': 'fundamental'})
+    # v2：配当利回りの単位を直した（K-46）。古いキャッシュ（344% など）を読まないため
+    cached = cache_get(stock_cache_table, {'code': ticker_code, 'cache_type': FUNDAMENTAL_CACHE_TYPE})
     if cached:
       print(f"ファンダ {ticker_code}: キャッシュヒット")
       return sanitize(cached)
@@ -321,7 +326,7 @@ def get_fundamental_data(ticker_code: str) -> dict:
             "operating_margin": safe_float(info.get("operatingMargins",0) * 100) if info.get("operatingMargins") else None,
             "debt_ratio":       safe_float(info.get("debtToEquity")),
             "equity_ratio":     safe_float(info.get("bookValue")),
-            "dividend_yield":   safe_float(info.get("dividendYield", 0) * 100) if info.get("dividendYield")      else None,
+            "dividend_yield":   dividend_yield_pct(info),
             "fcf":              info.get("freeCashflow"),
             "target_price":     safe_float(info.get("targetMeanPrice")),
             "analyst_rating":   info.get("recommendationKey"),
@@ -353,7 +358,7 @@ def get_fundamental_data(ticker_code: str) -> dict:
         # 24時間キャッシュ（ファンダは変化が少ない）
         clean_result = sanitize(result)
         cache_set(stock_cache_table,
-                  {'code': ticker_code, 'cache_type': 'fundamental'},
+                  {'code': ticker_code, 'cache_type': FUNDAMENTAL_CACHE_TYPE},
                   clean_result, ttl_minutes=1440)
         return clean_result
     except Exception as e:
