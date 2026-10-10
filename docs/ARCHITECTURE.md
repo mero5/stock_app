@@ -61,7 +61,7 @@ config/          設定値・定数（タイムアウト、お知らせ、日程
 
 | ファイル | 役割 | 主なパス |
 |---|---|---|
-| `stock.py` | 銘柄の検索・株価・詳細・イベント | `/search` `/stock/name` `/stock/price` `/stock/detail` `/stock/events` |
+| `stock.py` | 銘柄の検索・株価・詳細・イベント | `/search` `/stock/name` `/stock/price` `/stock/quotes`（ウォッチリスト用のまとめ取得） `/stock/detail` `/stock/events` |
 | `market.py` | 市場全体（イベント・セクター騰落・日経・騰落レシオ） | `/market/*` `/nikkei/monthly` |
 | `ai.py` | AI分析（スイング分析・相談・一括診断） | `/stock/swing_analysis` `/stock/consult` `/stock/ai_analysis` `/portfolio/diagnosis` |
 | `stats.py` | AI予測の成績・答え合わせ | `/stats/*` |
@@ -162,6 +162,7 @@ models/       データの型（Stock など）
 | プロファイルの項目を追加 | `routers/user.py`（保存・既定値）⇔ `UserProfileService` ⇔ `ProfileSetupScreen` ⇔ `StockService.runSwingAnalysis`（送信）⇔ `routers/ai.py`（受信）⇔ `build_profile_section` |
 | バックエンドのURL | `lib/config/constants.dart`（＋アプリのビルド番号を上げてリリース） |
 | APIのレスポンスの形 | 呼び出し側の `lib/services/*.dart` ⇔ E2Eテスト（`stock-app-e2e`） |
+| `/stock/name`・`/stock/price` の中身 | `/stock/quotes`（同じ関数を呼んでまとめて返している）⇔ `StockService.stockFromQuote`（表示用の整形を共有） |
 | 画面の文言（ボタン名など） | E2Eの画面テスト（`stock-app-e2e`） |
 | ユーザーに見える変更 | `config/notices.py` にお知らせを追加 |
 | 依存ライブラリ | `requirements.txt` **と** `requirements-lambda.txt` |
