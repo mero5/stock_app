@@ -114,3 +114,24 @@ def test_stock_events_returns_jp_earnings(monkeypatch):
     assert {"code": "7203", "name": "トヨタ自動車", "date": "2026-11-05", "type": "earnings",
             "label": "トヨタ自動車 決算発表", "color": "red"} in events
 
+
+def test_stock_events_prefers_yfinance_for_jp(monkeypatch):
+    # J-Quants の無料プランは「12週間前〜」のデータしか見られず、これからの決算日が取れない。
+    # yfinance の calendar に日付があれば、それを使って J-Quants は呼ばない
+    import datetime
+    import routers.stock as stock
+
+    class FakeTicker:
+        def __init__(self, symbol):
+            self.info = {"longName": "トヨタ自動車"}
+            self.calendar = {"Earnings Date": [datetime.date(2026, 11, 5)]}
+
+    monkeypatch.setattr(stock.yf, "Ticker", FakeTicker)
+
+    def must_not_call(*a, **k):
+        raise AssertionError("J-Quants を呼んだ")
+
+    monkeypatch.setattr(stock, "get_jp_earnings_dates", must_not_call)
+    events = stock.get_stock_events("7203")
+    assert [e["date"] for e in events if e["type"] == "earnings"] == ["2026-11-05"]
+

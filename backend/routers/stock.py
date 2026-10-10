@@ -417,38 +417,34 @@ def get_stock_events(codes: str):
             info = ticker.info
             name = info.get("longName") or info.get("shortName") or code
 
-            # 決算発表日（日本株はJ-Quantsの決算発表予定日 → services/jp_earnings.py）
-            if is_jp_code(code):
+            # 決算発表日：日本株・米国株とも、まず yfinance の calendar から取る。
+            # 日本株で取れなかったときだけ J-Quants の決算発表予定日（services/jp_earnings.py）を使う。
+            # J-Quants の無料プランは決算発表予定日が「12週間前〜」のデータしか見られず、
+            # これから来る決算日はほぼ取れないため（2026-10-10 に契約プランの表で確認。K-47）。
+            # yfinance は 7203.T → 2026-11-05、8306.T → 2026-11-13 のように日本株も返す
+            dates = []
+            try:
+                earnings_date = first_earnings_date(ticker.calendar)
+                if earnings_date:
+                    dates = [earnings_date]
+            except Exception as e:
+                print(f"決算日取得エラー（yfinance） {code}: {e}")
+            if not dates and is_jp_code(code):
                 try:
                     dates = get_jp_earnings_dates(
                         to_jquants_code(code), JQUANTS_API_KEY, str(today_jst())
                     )
-                    for date_str in dates:
-                        result.append({
-                            "code": code,
-                            "name": name,
-                            "date": date_str,
-                            "type": "earnings",
-                            "label": f"{name} 決算発表",
-                            "color": "red",
-                        })
                 except Exception as e:
                     print(f"J-Quants決算取得エラー {code}: {e}")
-            else:
-                # 米国株はyfinanceから
-                try:
-                    earnings_date = first_earnings_date(ticker.calendar)
-                    if earnings_date:
-                        result.append({
-                            "code": code,
-                            "name": name,
-                            "date": earnings_date,
-                            "type": "earnings",
-                            "label": f"{name} 決算発表",
-                            "color": "red",
-                        })
-                except Exception as e:
-                    print(f"米国株の決算日取得エラー {code}: {e}")
+            for date_str in dates:
+                result.append({
+                    "code": code,
+                    "name": name,
+                    "date": date_str,
+                    "type": "earnings",
+                    "label": f"{name} 決算発表",
+                    "color": "red",
+                })
 
             # 配当関連（yfinance）
             try:
