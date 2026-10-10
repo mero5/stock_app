@@ -17,10 +17,10 @@
 // ============================================================
 
 import 'package:flutter/foundation.dart';
-import 'package:http/http.dart' as http;
 import 'dart:convert';
 import '../config/constants.dart';
 import '../config/timeouts.dart';
+import 'api_client.dart';
 
 class UserProfileService {
   // ============================================================
@@ -36,7 +36,7 @@ class UserProfileService {
   /// 返り値：プロファイルのMap、未登録またはエラーの場合はnull
   static Future<Map<String, dynamic>?> getProfile(String userId) async {
     try {
-      final res = await http.get(
+      final res = await ApiClient.get(
         Uri.parse('${Constants.backendUrl}/user/profile?userId=$userId'),
       ).timeout(AppTimeouts.api);
 
@@ -71,7 +71,7 @@ class UserProfileService {
     Map<String, dynamic> profile,
   ) async {
     try {
-      final res = await http.post(
+      final res = await ApiClient.post(
         Uri.parse('${Constants.backendUrl}/user/profile'),
         headers: {'Content-Type': 'application/json'},
         // userIdとprofileの内容をマージして送信

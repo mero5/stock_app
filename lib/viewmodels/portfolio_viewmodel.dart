@@ -13,10 +13,10 @@
 import 'package:flutter/material.dart';
 import 'dart:async';
 import 'dart:convert';
-import 'package:http/http.dart' as http;
 import '../config/constants.dart';
 import '../services/stock_service.dart';
 import '../utils/stock_code.dart';
+import '../services/api_client.dart';
 
 class PortfolioViewModel extends ChangeNotifier {
   // ============================================================
@@ -195,7 +195,7 @@ class PortfolioViewModel extends ChangeNotifier {
       });
 
       // バックエンドにPOSTリクエストを送信
-      final res = await http
+      final res = await ApiClient
           .post(
             Uri.parse('${Constants.backendUrl}/portfolio/diagnosis'),
             headers: {'Content-Type': 'application/json'},
