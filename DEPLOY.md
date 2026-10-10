@@ -14,20 +14,23 @@
 | 公開 | Lambda Function URL（アプリの `lib/config/constants.dart` の `backendUrl`） |
 | 依存 | `backend/requirements-lambda.txt` |
 | APIキー | Lambda の環境変数（`JQUANTS_API_KEY` / `YOUTUBE_API_KEY` / `GEMINI_API_KEY` / `OPENAI_API_KEY`）。`.env` はイメージに入れない（`.dockerignore`） |
-| ECR リポジトリ名 | **TODO: 記入する** |
-| Lambda 関数名 | **TODO: 記入する** |
+| ECR リポジトリ名 | `stock-backend`（`448161423247.dkr.ecr.ap-northeast-1.amazonaws.com/stock-backend`） |
+| Lambda 関数名 | `stock-backend`（x86_64・メモリ 1024MB・タイムアウト 300秒。2026-10-10 確認） |
+| イメージのタグ | `v1`・`v2`・`v3` …と1つずつ上げる（前の版を残して、すぐ戻せるようにする）。2026-10-10 時点で `v3` が本番 |
+| アカウントの同時実行数の上限 | 10（2026-10-10 確認） |
 
 ### 手順
 
 `backend/` をビルドコンテキストにしてイメージを作り、ECR に push して Lambda を更新する。
 
 ```bash
-# 変数（TODO の値に置き換える）
-ACCOUNT_ID=<AWSアカウントID>
+# 変数（TAG は前回より1つ上げる。前の版はそのまま残る）
+ACCOUNT_ID=448161423247
 REGION=ap-northeast-1
-REPO=<ECRリポジトリ名>
-FUNC=<Lambda関数名>
-IMAGE=$ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/$REPO:latest
+REPO=stock-backend
+FUNC=stock-backend
+TAG=v4
+IMAGE=$ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com/$REPO:$TAG
 
 # 1. ECR にログイン
 aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin $ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com
@@ -46,6 +49,10 @@ aws lambda wait function-updated --function-name $FUNC --region $REGION
 curl -s https://<Function URL>/health
 ```
 
+- **元に戻すとき**：前のタグ（例 `v2`）を指定して `aws lambda update-function-code` を実行する
+- **push の前に、イメージの中で起動できるか確かめる**：`docker run --rm --entrypoint python -e OPENAI_API_KEY=dummy $IMAGE -c "import main"`（読み込みに失敗するイメージを出さないため）
+- **デプロイ直後の J-Quants**：新しいコンテナが銘柄マスタを取りに行く。無料プランは1分5回までなので、取りに行くのは「取得中」の札を取れた1コンテナだけ（#52）。数分たっても `/health` が `jquants: error` のときは CloudWatch Logs で `429` を確認する
+- AWS CLI のログインは `aws login`（初回はリージョンに `ap-northeast-1` を入れる）。Git Bash でロググループ名を指定するときは `MSYS_NO_PATHCONV=1` を付ける（`/aws/lambda/…` が Windows のパスに書き換えられるため）
 - `--provenance=false` を付けないと、Docker のバージョンによっては Lambda が受け付けない形式のイメージになる
 - `backend/` に新しいフォルダ（`config/` など）を足しても、Dockerfile は `COPY .` なので自動で入る
 
