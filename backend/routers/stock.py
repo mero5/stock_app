@@ -2,12 +2,13 @@ import math
 import time
 import datetime
 import requests
+from concurrent.futures import ThreadPoolExecutor
 import yfinance as yf
 from fastapi import APIRouter
 from services.cache import stock_cache_table, cache_get, cache_set
-from config.timeouts import JQUANTS_TIMEOUT
-from services.clock import JST
-from services.market_data import drop_empty_rows, first_earnings_date, week52_range
+from services.clock import JST, today_jst
+from services.jp_earnings import get_jp_earnings_dates
+from services.market_data import drop_empty_rows, first_earnings_date, dividend_yield_pct, week52_range
 from services.stock_code import is_jp_code, to_yf_ticker, to_jquants_code
 
 
@@ -25,6 +26,11 @@ router = APIRouter()
 # ===================================================
 # ユーティリティ関数
 # ===================================================
+def _pct_to_ratio(pct):
+    """% を割合にする（3.44 → 0.0344）。None はそのまま"""
+    return None if pct is None else round(pct / 100, 6)
+
+
 # NaN値をNoneに変換（JSONシリアライズエラー防止）
 def clean_value(v):
     if isinstance(v, float) and math.isnan(v):
@@ -274,7 +280,9 @@ def get_stock_detail(code: str):
             "per": clean_value(info.get("trailingPE")),
             "pbr": clean_value(info.get("priceToBook")),
             "market_cap": clean_value(info.get("marketCap")),
-            "dividend_yield": clean_value(info.get("dividendYield")),
+            # アプリは割合（0.0344）として受け取って ×100 して表示するので、% を割合に直して返す。
+            # 以前は yfinance の値（今の版は %）をそのまま返していて「344.00%」と表示されていた（K-46）
+            "dividend_yield": _pct_to_ratio(dividend_yield_pct(info)),
             "roe": clean_value(info.get("returnOnEquity")),
             "roa": clean_value(info.get("returnOnAssets")),
             "revenue_growth": clean_value(info.get("revenueGrowth")),
@@ -335,6 +343,56 @@ def get_stock_price(code: str):
 
 
 # ===================================================
+# ウォッチリスト用：銘柄名と株価をまとめて取得するAPI
+#
+# 以前のアプリは、ウォッチリストの銘柄ごとに /stock/name と /stock/price を
+# 全部同時に呼んでいた（10銘柄なら20回）。Lambda はリクエストごとに動くので、
+# アカウントの同時実行数の上限を超えた分が ConcurrentInvocationLimitExceeded で断られ、
+# 株価が「---」・銘柄名がコードのままになっていた（2026-10-10 本番で再現）。
+# 1回のリクエストで全銘柄分を返し、中は上の2つのAPIと同じ処理をスレッドで並列に回す。
+# ===================================================
+# 1回で受け付ける銘柄数の上限（Lambda のタイムアウトに収めるため）
+QUOTES_MAX_CODES = 50
+# yfinance を同時に呼ぶ数（多すぎると Yahoo 側で断られやすい）
+QUOTES_MAX_WORKERS = 8
+
+
+def _quote(code: str) -> dict:
+    """1銘柄分の銘柄名・株価・前日比（/stock/name と /stock/price を合わせた形）"""
+    try:
+        name = get_stock_name(code).get("name", code)
+        price = get_stock_price(code)
+    except Exception as e:
+        print(f"ウォッチリストの銘柄取得エラー {code}: {e}")
+        name, price = code, {}
+    return {
+        "code": code,
+        "name": name,
+        "price": price.get("price"),
+        "change": price.get("change"),
+        "change_pct": price.get("change_pct"),
+    }
+
+
+@router.get("/stock/quotes")
+def get_stock_quotes(codes: str):
+    """
+    ウォッチリストの銘柄名・株価・前日比をまとめて返す（ホーム画面用）
+    codes: カンマ区切りの銘柄コード（例: 72030,285A0,AAPL）。上限 QUOTES_MAX_CODES 件
+    戻り値: {"quotes": [{code, name, price, change, change_pct}, ...]}（codes と同じ順）
+    取れなかった項目は null（名前はコード）。1銘柄の失敗で全体を失敗にしない
+    """
+    code_list = [c.strip() for c in codes.split(",") if c.strip()][:QUOTES_MAX_CODES]
+    if not code_list:
+        return {"quotes": []}
+    # 日本株の名前を引く前にマスタを用意しておく（スレッドごとに取り直しに行かないように）
+    ensure_stocks_master()
+    with ThreadPoolExecutor(max_workers=QUOTES_MAX_WORKERS) as executor:
+        quotes = list(executor.map(_quote, code_list))
+    return {"quotes": quotes}
+
+
+# ===================================================
 # 銘柄イベント取得API
 # ===================================================
 @router.get("/stock/events")
@@ -356,30 +414,23 @@ def get_stock_events(codes: str):
             info = ticker.info
             name = info.get("longName") or info.get("shortName") or code
 
-            # 決算発表日（日本株はJ-Quantsから取得）
+            # 決算発表日（日本株はJ-Quantsの決算発表予定日 → services/jp_earnings.py）
             if is_jp_code(code):
                 try:
-                    res = requests.get(
-                        "https://api.jquants.com/v2/fins/announcement",
-                        headers={"x-api-key": JQUANTS_API_KEY},
-                        params={"code": to_jquants_code(code)},
-                        timeout=JQUANTS_TIMEOUT,
+                    dates = get_jp_earnings_dates(
+                        to_jquants_code(code), JQUANTS_API_KEY, str(today_jst())
                     )
-                    data = res.json()
-                    announcements = data.get("announcement", [])
-                    for ann in announcements[:2]:
-                        date_str = ann.get("AnnouncementDate", "")
-                        if date_str:
-                            result.append({
-                                "code": code,
-                                "name": name,
-                                "date": date_str[:10],
-                                "type": "earnings",
-                                "label": f"{name} 決算発表",
-                                "color": "red",
-                            })
+                    for date_str in dates:
+                        result.append({
+                            "code": code,
+                            "name": name,
+                            "date": date_str,
+                            "type": "earnings",
+                            "label": f"{name} 決算発表",
+                            "color": "red",
+                        })
                 except Exception as e:
-                    print(f"J-Quants決算取得エラー: {e}")
+                    print(f"J-Quants決算取得エラー {code}: {e}")
             else:
                 # 米国株はyfinanceから
                 try:

@@ -132,10 +132,16 @@ def test_get_earnings_alert_uses_jst_today(today):
 # セクター名の突合（英語のセクター → 日本語のセクターETF名）
 # ---------------------------------------------------
 @pytest.mark.parametrize("sector, industry, is_jp, expected", [
-    ("Consumer Cyclical", "Auto Manufacturers", True, "自動車"),   # 日本株は industry 優先
-    ("Technology", "", True, "電気機器"),
+    ("Consumer Cyclical", "Auto Manufacturers", True, "自動車・輸送機"),   # 日本株は industry 優先
+    ("Technology", "", True, "電機・精密"),
+    ("Financial Services", "Banks - Regional", True, "銀行"),
+    ("Financial Services", "Insurance - Life", True, "金融（除く銀行）"),
+    ("Industrials", "Conglomerates", True, "商社・卸売"),          # 三菱商事など
+    ("Consumer Cyclical", "Internet Retail", True, "小売"),        # 情報通信より小売を優先
+    ("Utilities", "Utilities - Regulated Gas", True, "電力・ガス"),  # "gas" でエネルギーにしない
+    ("Healthcare", "Medical Instruments & Supplies", True, "電機・精密"),  # 精密機器（テルモなど）
     ("Technology", "Semiconductors", False, "テクノロジー"),       # 米国株は sector のみ
-    ("Utilities", "", True, None),                                  # 対応ETFなし
+    ("Utilities", "", True, "電力・ガス"),                          # TOPIX-17 に電力・ガスがある
     ("", "", True, None),
     ("自動車", "", True, "自動車"),                                 # すでに日本語
 ])
@@ -145,11 +151,11 @@ def test_resolve_sector_name(sector, industry, is_jp, expected):
 
 def test_resolve_sector_trend():
     sector_data = {
-        "jp": [{"name": "自動車", "change_pct": 1.234, "trend_5d": -0.4}],
+        "jp": [{"name": "自動車・輸送機", "change_pct": 1.234, "trend_5d": -0.4}],
         "us": [{"name": "テクノロジー", "change_pct": -0.5, "trend_5d": 2}],
     }
     assert t.resolve_sector_trend("Consumer Cyclical", "Auto Parts", sector_data, "7203.T") \
-        == "自動車 +1.23%（5日:-0.40%）"
+        == "自動車・輸送機 +1.23%（5日:-0.40%）"
     assert t.resolve_sector_trend("Technology", "", sector_data, "AAPL") \
         == "テクノロジー -0.50%（5日:+2.00%）"
     assert t.resolve_sector_trend("Real Estate", "", sector_data, "8801.T") == "不明"

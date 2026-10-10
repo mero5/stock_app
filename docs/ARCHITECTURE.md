@@ -61,7 +61,7 @@ config/          設定値・定数（タイムアウト、お知らせ、日程
 
 | ファイル | 役割 | 主なパス |
 |---|---|---|
-| `stock.py` | 銘柄の検索・株価・詳細・イベント | `/search` `/stock/name` `/stock/price` `/stock/detail` `/stock/events` |
+| `stock.py` | 銘柄の検索・株価・詳細・イベント | `/search` `/stock/name` `/stock/price` `/stock/quotes`（ウォッチリスト用のまとめ取得） `/stock/detail` `/stock/events` |
 | `market.py` | 市場全体（イベント・セクター騰落・日経・騰落レシオ） | `/market/*` `/nikkei/monthly` |
 | `ai.py` | AI分析（スイング分析・相談・一括診断） | `/stock/swing_analysis` `/stock/consult` `/stock/ai_analysis` `/portfolio/diagnosis` |
 | `stats.py` | AI予測の成績・答え合わせ | `/stats/*` |
@@ -80,11 +80,15 @@ config/          設定値・定数（タイムアウト、お知らせ、日程
 | やりたいこと | 使うもの | 理由（使わないとどうなるか） |
 |---|---|---|
 | 現在の日時・今日の日付 | `services/clock.py` の `now_jst()` / `today_jst()` / `JST` | Lambda は UTC。日本時間 0:00〜8:59 が「前日」になる |
+| 東証の営業日・権利落ち日 | `services/tse_calendar.py` の `is_tse_business_day()` / `month_end_rights_dates()` | 土日だけで数えると、祝日・年末（12/31〜1/3）の休場で日付がずれる。exchange_calendars の東証カレンダーは約1年先までしか計算できない |
 | 外部APIのタイムアウト値 | `config/timeouts.py` | 未指定だと無限に待ち、Lambda の15分制限で落ちる |
+| 日本株の決算発表予定日 | `services/jp_earnings.py` の `get_jp_earnings_dates()`（J-Quants `/v2/fins/earnings-date`。12時間保存） | V1 の名前（`/fins/announcement`）を V2 で呼ぶと存在せず、決算日が一度も出なかった（K-47）。J-Quants の無料プランは1分5回まで。**J-Quants の API を足すときは、V2 の移行表（https://jpx-jquants.com/ja/spec/migration-v1-v2）で名前を確かめる** |
 | 日本株かどうかの判定・銘柄コードの変換 | `services/stock_code.py` の `is_jp_code()` / `to_yf_ticker()` / `to_jquants_code()`（アプリは `lib/utils/stock_code.dart` の `StockCode`） | `isdigit()` や `^\d{5}$` で判定すると、英字入りのコード（285A など）を米国株として扱ってしまう |
 | yfinance の結果の後始末 | `services/market_data.py` の `drop_empty_rows()` | 日本株は最新日が空の行で返り、株価・指標が全部 null になる |
+| 配当利回り | `services/market_data.py` の `dividend_yield_pct()`（%で返す。年間配当額 ÷ 株価） | yfinance の `dividendYield` は版によって単位（割合／%）が変わる。×100 すると「344%」になる（K-46）。詳細APIはアプリに合わせて割合で返す |
 | 52週の高値・安値 | `services/market_data.py` の `week52_range()`（yfinance の `fiftyTwoWeekHigh/Low` を優先） | 手元の期間（3か月・6か月）の高値・安値を「52週」として出してしまう（K-50） |
 | DynamoDB のキャッシュ | `services/cache.py` の `cache_get()` / `cache_set()` | 期限切れの判定・Decimal 変換を毎回書くことになる |
+| 銘柄マスタ（全上場銘柄の名前一覧）の用意 | `services/stocks_master.py` の `prepare_stocks_master()`（DynamoDB に1日保存したものを先に読み、無いときだけ J-Quants から取る。ページ送りも読む） | 起動のたびに J-Quants へ取りに行くと、同時に何台も起動したときに一部の台で失敗し、銘柄名がコードのまま・`/health` が J-Quants エラーになる |
 | AI系のエラーレスポンス | `routers/ai.py` の `classify_error()` / `error_response()` | アプリがエラーを結果として扱ってしまう |
 | OpenAI で JSON を受け取る | `routers/ai.py` の `call_openai_json()` | 途中で切れた JSON（`max_tokens` 切れ）を検出できない |
 | OpenAI のモデル名 | `config/ai_models.py` の `OPENAI_ANALYSIS_MODEL`（分析）/ `OPENAI_LIGHT_MODEL`（翻訳・相談）と考える量 `OPENAI_ANALYSIS_EFFORT` / `OPENAI_LIGHT_EFFORT` | 直書きすると、変えるときに漏れる |
@@ -157,11 +161,12 @@ models/       データの型（Stock など）
 |---|---|
 | AIの優先順位の既定値 | `services/technical.py` の `DEFAULT_PRIORITY` ⇔ `lib/screens/profile_setup_screen.dart` の既定値 |
 | プロンプト | `services/technical.py` の `PROMPT_VERSION` を上げる |
-| セクターETFの名前 | `routers/market.py` の `jp_sectors` / `us_sectors` ⇔ `services/technical.py` の `SECTOR_EN_TO_JP` / `SECTOR_EN_TO_US` / `INDUSTRY_KEYWORD_TO_JP` |
+| セクターETFの名前 | `routers/market.py` の `JP_SECTOR_ETFS` / `US_SECTOR_ETFS`（日本は JPX の ETF 一覧の「TOPIX-17 ○○」の名前）⇔ `services/technical.py` の `SECTOR_EN_TO_JP` / `SECTOR_EN_TO_US` / `INDUSTRY_KEYWORD_TO_JP` ⇔ `lib/screens/market_screen.dart` の説明文。名前を変えたら `/market/sectors` のキャッシュキーの版を上げる（`tests/test_sector_names.py` が対応表の名前の食い違いを検出する） |
 | イベントの type を追加 | `routers/market.py` ⇔ `lib/config/event_types.dart`（グループに入れないとフィルタに出ない） |
 | プロファイルの項目を追加 | `routers/user.py`（保存・既定値）⇔ `UserProfileService` ⇔ `ProfileSetupScreen` ⇔ `StockService.runSwingAnalysis`（送信）⇔ `routers/ai.py`（受信）⇔ `build_profile_section` |
 | バックエンドのURL | `lib/config/constants.dart`（＋アプリのビルド番号を上げてリリース） |
 | APIのレスポンスの形 | 呼び出し側の `lib/services/*.dart` ⇔ E2Eテスト（`stock-app-e2e`） |
+| `/stock/name`・`/stock/price` の中身 | `/stock/quotes`（同じ関数を呼んでまとめて返している）⇔ `StockService.stockFromQuote`（表示用の整形を共有） |
 | 画面の文言（ボタン名など） | E2Eの画面テスト（`stock-app-e2e`） |
 | ユーザーに見える変更 | `config/notices.py` にお知らせを追加 |
 | 依存ライブラリ | `requirements.txt` **と** `requirements-lambda.txt` |
@@ -180,3 +185,4 @@ models/       データの型（Stock など）
 - 最大15分で強制終了（→ `config/timeouts.py`）
 - モジュール変数（`stocks_master` など）はコンテナが生きている間だけ残る。毎回あるとは限らない前提で書く
 - 起動時の処理（`main.py` の startup）はコールドスタートのたびに走る。重い処理を足さない
+- アプリが同時に何件も問い合わせると、Lambda が何台も同時に起動する。起動時に外部APIへ取りに行くものは DynamoDB に保存して共有する（例：銘柄マスタ）。また、アカウントの同時実行数の上限を超えた分は `ConcurrentInvocationLimitExceeded` で断られる

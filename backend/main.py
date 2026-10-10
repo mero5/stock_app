@@ -3,7 +3,6 @@
 # ===================================================
 
 import os
-import requests
 import yfinance as yf
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,10 +12,11 @@ import google.generativeai as genai
 import math
 from fastapi.responses import JSONResponse
 import json
-from config.timeouts import JQUANTS_TIMEOUT, OPENAI_TIMEOUT_SEC, OPENAI_MAX_RETRIES
+from config.timeouts import OPENAI_TIMEOUT_SEC, OPENAI_MAX_RETRIES
 from fastapi import Request
 from starlette.concurrency import run_in_threadpool
 from services.auth import verify_request_token
+from services.stocks_master import prepare_stocks_master
 
 # ===================================================
 # APIキー設定
@@ -129,32 +129,21 @@ app.include_router(notices_router.router)
 # ===================================================
 def fetch_stocks_master() -> bool:
     """
-    J-Quantsから全上場銘柄マスタを取得して stocks_master に入れる。成功したら True
+    全上場銘柄マスタを用意して stocks_master に入れる。成功したら True
 
     起動時に1回呼ぶほか、検索・銘柄名APIでマスタが空のときに routers/stock.py から呼ばれる。
     以前は起動時の1回だけだったので、そこで失敗する（J-Quantsの一時的な障害・タイムアウト）と、
     Lambdaのコンテナが入れ替わるまで日本株の検索・銘柄名が全部空になっていた。
+    まず DynamoDB に1日保存したものを読み、無いときだけ J-Quants に取りに行く
+    （services/stocks_master.py。起動のたびに J-Quants へ同時アクセスして失敗していたため）。
     """
-    try:
-        res = requests.get(
-            "https://api.jquants.com/v2/equities/master",
-            headers={"x-api-key": JQUANTS_API_KEY},
-            timeout=JQUANTS_TIMEOUT,
-        )
-        if res.status_code != 200:
-            print(f"銘柄マスタ取得エラー: HTTP {res.status_code} {res.text[:200]}")
-            return False
-        loaded = res.json().get("data", [])
-        if not loaded:
-            print("銘柄マスタ取得エラー: 0件")
-            return False
-        # routers/stock.py と同じリストを共有しているので、作り直さずに中身を入れ替える
-        stocks_master[:] = loaded
-        print(f"銘柄マスタ取得完了: {len(stocks_master)}件")
-        return True
-    except Exception as e:
-        print(f"銘柄マスタ取得エラー: {e}")
+    loaded, source = prepare_stocks_master(JQUANTS_API_KEY)
+    if not loaded:
         return False
+    # routers/stock.py と同じリストを共有しているので、作り直さずに中身を入れ替える
+    stocks_master[:] = loaded
+    print(f"銘柄マスタ取得完了: {len(stocks_master)}件（{source}）")
+    return True
 
 
 stock_router.reload_stocks_master = fetch_stocks_master
@@ -177,6 +166,9 @@ def health_check():
     except:
         results["yfinance"] = "error"
     # J-Quantsチェック
+    # このコンテナのマスタが空なら、判定の前に取り直す（60秒に1回まで）。
+    # 以前は空のまま「error」を返し、アプリに「J-Quantsに接続できません」と出ていた
+    stock_router.ensure_stocks_master()
     try:
         results["jquants"] = "ok" if len(stocks_master) > 0 else "error"
     except:

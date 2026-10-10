@@ -51,7 +51,11 @@ class _AiStatsScreenState extends State<AiStatsScreen> {
       final userId = await AuthService.getUserId() ?? '';
       // 成績APIは呼ばれたタイミングで答え合わせも行うため、先に完了を待つ
       final stats = await StockService.getAccuracyStats(userId: userId);
-      final history = await StockService.getPredictionHistory(limit: 30);
+      // 自分の予測だけを出す（以前は userId を渡しておらず、他のユーザーの予測も出ていた）
+      final history = await StockService.getPredictionHistory(
+        limit: 30,
+        userId: userId,
+      );
       if (!mounted) return;
       setState(() {
         if (stats['error'] != null) {
