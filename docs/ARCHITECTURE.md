@@ -86,6 +86,7 @@ config/          設定値・定数（タイムアウト、お知らせ、日程
 | 日本株かどうかの判定・銘柄コードの変換 | `services/stock_code.py` の `is_jp_code()` / `to_yf_ticker()` / `to_jquants_code()`（アプリは `lib/utils/stock_code.dart` の `StockCode`） | `isdigit()` や `^\d{5}$` で判定すると、英字入りのコード（285A など）を米国株として扱ってしまう |
 | yfinance の結果の後始末 | `services/market_data.py` の `drop_empty_rows()` | 日本株は最新日が空の行で返り、株価・指標が全部 null になる |
 | 配当利回り | `services/market_data.py` の `dividend_yield_pct()`（%で返す。年間配当額 ÷ 株価） | yfinance の `dividendYield` は版によって単位（割合／%）が変わる。×100 すると「344%」になる（K-46）。詳細APIはアプリに合わせて割合で返す |
+| 52週の高値・安値 | `services/market_data.py` の `week52_range()`（yfinance の `fiftyTwoWeekHigh/Low` を優先） | 手元の期間（3か月・6か月）の高値・安値を「52週」として出してしまう（K-50） |
 | DynamoDB のキャッシュ | `services/cache.py` の `cache_get()` / `cache_set()` | 期限切れの判定・Decimal 変換を毎回書くことになる |
 | 銘柄マスタ（全上場銘柄の名前一覧）の用意 | `services/stocks_master.py` の `prepare_stocks_master()`（DynamoDB に1日保存したものを先に読み、無いときだけ J-Quants から取る。ページ送りも読む） | 起動のたびに J-Quants へ取りに行くと、同時に何台も起動したときに一部の台で失敗し、銘柄名がコードのまま・`/health` が J-Quants エラーになる |
 | AI系のエラーレスポンス | `routers/ai.py` の `classify_error()` / `error_response()` | アプリがエラーを結果として扱ってしまう |

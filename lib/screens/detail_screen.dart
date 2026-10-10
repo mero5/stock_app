@@ -160,7 +160,7 @@ class _DetailScreenState extends State<DetailScreen> {
             child: TabBarView(
               children: [
                 _buildChartTab(candles),
-                _buildJudgeTab(candles),
+                _buildJudgeTab(candles, vm.detail!),
                 _buildIndicatorTab(vm),
                 _buildAiTab(vm),
                 _buildNewsTab(vm),
@@ -279,7 +279,10 @@ class _DetailScreenState extends State<DetailScreen> {
     );
   }
 
-  Widget _buildJudgeTab(List<Map<String, dynamic>> candles) {
+  Widget _buildJudgeTab(
+    List<Map<String, dynamic>> candles,
+    Map<String, dynamic> detail,
+  ) {
     if (candles.isEmpty) return const Center(child: Text("データなし"));
 
     final closes = candles
@@ -300,8 +303,13 @@ class _DetailScreenState extends State<DetailScreen> {
     final lows = candles
         .map((c) => (c['low'] as num?)?.toDouble() ?? 0.0)
         .toList();
-    final high52 = highs.reduce((a, b) => a > b ? a : b);
-    final low52 = lows.reduce((a, b) => a < b ? a : b);
+    // 52週の高値・安値はバックエンドの値（yfinance の本当の52週）を使う。
+    // 以前は3か月分のローソク足から計算していて「52週」になっていなかった（K-50）。
+    // 古いバックエンドで値が無いときだけ、ローソク足から求める
+    final high52 = (detail['week52_high'] as num?)?.toDouble() ??
+        highs.reduce((a, b) => a > b ? a : b);
+    final low52 = (detail['week52_low'] as num?)?.toDouble() ??
+        lows.reduce((a, b) => a < b ? a : b);
 
     double ema(List<double> data, int period) {
       if (data.length < period) return data.last;

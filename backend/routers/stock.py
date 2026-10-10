@@ -8,7 +8,7 @@ from fastapi import APIRouter
 from services.cache import stock_cache_table, cache_get, cache_set
 from services.clock import JST, today_jst
 from services.jp_earnings import get_jp_earnings_dates
-from services.market_data import drop_empty_rows, first_earnings_date, dividend_yield_pct
+from services.market_data import drop_empty_rows, first_earnings_date, dividend_yield_pct, week52_range
 from services.stock_code import is_jp_code, to_yf_ticker, to_jquants_code
 
 
@@ -254,6 +254,8 @@ def get_stock_detail(code: str):
             change = None
             change_pct = None
         
+        week52 = week52_range(info, [c["high"] for c in candles], [c["low"] for c in candles])
+
         # ニュース取得
         try:
             news_raw = ticker.news or []
@@ -285,6 +287,10 @@ def get_stock_detail(code: str):
             "roa": clean_value(info.get("returnOnAssets")),
             "revenue_growth": clean_value(info.get("revenueGrowth")),
             "debt_to_equity": clean_value(info.get("debtToEquity")),
+            # 本当の52週の高値・安値（詳細画面の「52週価格帯」用）。
+            # 以前の画面は3か月分のローソク足から計算していた（K-50）
+            "week52_high": clean_value(week52[0]),
+            "week52_low": clean_value(week52[1]),
             "news": news,
             "candles": [
                 {k: clean_value(v) for k, v in c.items()}

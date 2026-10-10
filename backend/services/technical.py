@@ -160,12 +160,17 @@ def get_nikkei225_breadth() -> dict:
         }
 
 
+# テクニカルのキャッシュの種類名。中身（計算方法）を変えたら版を上げる
+# v2：1年分で52週を計算・ADX を DX の14日平均に（K-50・K-51）
+TECHNICAL_CACHE_TYPE = 'technical_v2'
+
+
 def get_technical_data(ticker_code: str) -> dict:
     """
     テクニカル指標を計算して返す（DynamoDBに4時間キャッシュ）
     """
     # キャッシュ確認
-    cached = cache_get(stock_cache_table, {'code': ticker_code, 'cache_type': 'technical'})
+    cached = cache_get(stock_cache_table, {'code': ticker_code, 'cache_type': TECHNICAL_CACHE_TYPE})
     if cached:
         print(f"テクニカル {ticker_code}: キャッシュヒット")
         return sanitize(cached)
@@ -173,7 +178,9 @@ def get_technical_data(ticker_code: str) -> dict:
     print(f"テクニカル {ticker_code}: yfinanceから計算")
     try:
         t = yf.Ticker(ticker_code)
-        hist = drop_empty_rows(t.history(period="6mo"))
+        # 52週の高値・安値と6か月モメンタムを出すため1年分取る。
+        # 以前は6か月分だけで、「52週」が実は6か月の値・6か月モメンタムはデータ不足で出ないことが多かった（K-50）
+        hist = drop_empty_rows(t.history(period="1y"))
         if len(hist) < 30:
             return {}
 
@@ -238,13 +245,14 @@ def get_technical_data(ticker_code: str) -> dict:
         plus_dm  = high.diff().clip(lower=0)
         minus_dm = (-low.diff()).clip(lower=0)
         tr_adx   = tr.rolling(14).mean()
-        plus_di  = safe_float((plus_dm.rolling(14).mean()  / tr_adx * 100).iloc[-1])
-        minus_di = safe_float((minus_dm.rolling(14).mean() / tr_adx * 100).iloc[-1])
-        if plus_di and minus_di:
-            dx  = abs(plus_di - minus_di) / (plus_di + minus_di) * 100
-            adx = safe_float(dx)
-        else:
-            adx = None
+        plus_di_s  = plus_dm.rolling(14).mean()  / tr_adx * 100
+        minus_di_s = minus_dm.rolling(14).mean() / tr_adx * 100
+        plus_di  = safe_float(plus_di_s.iloc[-1])
+        minus_di = safe_float(minus_di_s.iloc[-1])
+        # ADX は DX（+DI と -DI の差の割合）の14日平均。
+        # 以前は最新1日の DX をそのまま ADX として渡していて、日によって大きくぶれていた（K-51）
+        dx_s = (plus_di_s - minus_di_s).abs() / (plus_di_s + minus_di_s) * 100
+        adx  = safe_float(dx_s.rolling(14).mean().iloc[-1])
 
         # 52週レンジ位置
         week52_high = safe_float(close.tail(252).max())
@@ -289,7 +297,7 @@ def get_technical_data(ticker_code: str) -> dict:
         # 4時間キャッシュ
         clean_result = sanitize(result)
         cache_set(stock_cache_table,
-                  {'code': ticker_code, 'cache_type': 'technical'},
+                  {'code': ticker_code, 'cache_type': TECHNICAL_CACHE_TYPE},
                   clean_result, ttl_minutes=240)
         return clean_result
     except Exception as e:
@@ -671,7 +679,8 @@ def fmt(val, suffix="", null_str="データなし"):
 # 「改良前と改良後で的中率がどう変わったか」を比較できる。
 # ここを上げ忘れると改良の効果が測れなくなるので注意。
 # ===================================================
-PROMPT_VERSION = "v3-indicator-fix"  # v3: 騰落レシオ%表記・3ヶ月債・RSIワイルダー・長期ルール修正
+PROMPT_VERSION = "v4-data-fix"  # v4: セクター名を TOPIX-17 に（#38）・配当利回りの単位（#39）・52週を1年分で・ADX を14日平均に・配当落ち日を追加（このPR）
+# v3: 騰落レシオ%表記・3ヶ月債・RSIワイルダー・長期ルール修正
 
 
 # ===================================================
@@ -899,6 +908,7 @@ def build_short_prompt(name, code, tech, fund, macro, breadth,
 {macro_block}
 【決算アラート】
 - 決算日：{fmt(earnings_alert.get('date'))}
+- 配当落ち日：{fmt(earnings_alert.get('ex_dividend_date'))}
 - 残り日数：{fmt(earnings_alert.get('days_to'), '日')}
 - アラートレベル：{earnings_alert.get('level', 'safe')}
   ※danger=急騰・急落リスク大／caution=注意／safe=当面なし
@@ -1056,6 +1066,7 @@ def build_medium_prompt(name, code, tech, fund, macro, breadth,
 {macro_block}
 【決算アラート】
 - 決算日：{fmt(earnings_alert.get('date'))}
+- 配当落ち日：{fmt(earnings_alert.get('ex_dividend_date'))}
 - 残り日数：{fmt(earnings_alert.get('days_to'), '日')}
 - アラートレベル：{earnings_alert.get('level', 'safe')}
   ※danger=急騰・急落リスク大／caution=注意／safe=当面なし
@@ -1216,6 +1227,7 @@ def build_long_prompt(name, code, tech, fund, macro, breadth=None,
 {supply_block}
 【決算アラート】
 - 決算日：{fmt(earnings_alert.get('date'))}
+- 配当落ち日：{fmt(earnings_alert.get('ex_dividend_date'))}
 - 残り日数：{fmt(earnings_alert.get('days_to'), '日')}
 - アラートレベル：{earnings_alert.get('level', 'safe')}
   ※長期保有でも決算をまたぐ場合は変動リスクとして言及すること
