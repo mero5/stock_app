@@ -86,6 +86,24 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
   /// 「直近の予定」を読み込み済みか
   bool _upcomingLoaded = false;
 
+  /// 取得に失敗したときのメッセージ（null ならエラーなし）。画面の上に帯で出す
+  ///
+  /// 以前は失敗してもログに出すだけで、予定が無いように見えていた（K-54）
+  String? _loadError;
+
+  /// カレンダーの読み込みの通し番号
+  ///
+  /// 月を素早く切り替えると、前の月の応答が後から届いて上書きすることがあったので、
+  /// 最後に始めた読み込みの結果だけを使う
+  int _loadSeq = 0;
+
+  /// 銘柄イベントを取ったときのウォッチリスト（カンマ区切り）
+  ///
+  /// 銘柄イベント（決算・配当落ち日）は月に関係なく同じなので、
+  /// 月を変えるたびには取り直さず、ウォッチリストが変わったときだけ取り直す
+  /// （以前は月を変えるたびに全銘柄を取り直していて遅く、J-Quants の回数制限にもかかりやすかった）
+  String? _stockEventsKey;
+
   // ============================================================
   // ライフサイクル
   // ============================================================
@@ -116,38 +134,53 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
   /// 3. ウォッチリスト銘柄のイベント（決算・配当落ち日）
   ///
   /// Future.waitで並行取得してパフォーマンスを最適化している。
-  Future<void> _loadAllEvents() async {
+  Future<void> _loadAllEvents({bool forceStockEvents = false}) async {
+    final seq = ++_loadSeq;
     setState(() => _isLoading = true);
 
-    try {
-      final year = _focusedMonth.year;
-      final month = _focusedMonth.month;
+    final year = _focusedMonth.year;
+    final month = _focusedMonth.month;
+    final failed = <String>[];
 
-      // ウォッチリストの銘柄コード一覧を取得
-      final codes = await WatchlistService.getCodes();
-
-      // 並行取得するFutureのリスト
-      final futures = <Future>[
-        StockService.getMarketEvents(year, month), // マーケットイベント
-        StockService.getNikkeiMonthly(year, month), // 日経平均月次データ
-        if (codes.isNotEmpty) StockService.getStockEvents(codes), // 銘柄イベント
-      ];
-
-      final results = await Future.wait(futures);
-
-      setState(() {
-        _marketEvents = results[0] as List<Map<String, dynamic>>;
-        _nikkeiData = results[1] as Map<String, dynamic>;
-        // ウォッチリストが空の場合は銘柄イベントを取得していないため空リスト
-        _stockEvents = codes.isNotEmpty
-            ? results[2] as List<Map<String, dynamic>>
-            : [];
-      });
-    } catch (e) {
-      debugPrint('スケジュール取得エラー: $e');
-    } finally {
-      setState(() => _isLoading = false);
+    // 1つ失敗しても、取れたものは表示する
+    Future<T> guard<T>(Future<T> future, T fallback, String label) async {
+      try {
+        return await future;
+      } catch (e) {
+        debugPrint('スケジュール取得エラー（$label）: $e');
+        failed.add(label);
+        return fallback;
+      }
     }
+
+    // ウォッチリストの銘柄コード一覧を取得
+    final codes = await guard(WatchlistService.getCodes(), <String>[], 'ウォッチリスト');
+    final codesKey = codes.join(',');
+    final needStockEvents =
+        codes.isNotEmpty && (forceStockEvents || codesKey != _stockEventsKey);
+
+    final results = await Future.wait<Object>([
+      guard(StockService.getMarketEvents(year, month), <Map<String, dynamic>>[], 'マーケットの予定'),
+      guard(StockService.getNikkeiMonthly(year, month), <String, dynamic>{}, '日経平均'),
+      if (needStockEvents)
+        guard(StockService.getStockEvents(codes), <Map<String, dynamic>>[], '銘柄の決算・配当'),
+    ]);
+
+    // 後から始めた読み込みがあれば、この結果は捨てる（前の月の結果で上書きしない）
+    if (!mounted || seq != _loadSeq) return;
+    setState(() {
+      _marketEvents = results[0] as List<Map<String, dynamic>>;
+      _nikkeiData = results[1] as Map<String, dynamic>;
+      if (codes.isEmpty) {
+        _stockEvents = [];
+        _stockEventsKey = '';
+      } else if (needStockEvents && !failed.contains('銘柄の決算・配当')) {
+        _stockEvents = results[2] as List<Map<String, dynamic>>;
+        _stockEventsKey = codesKey;
+      }
+      _loadError = failed.isEmpty ? null : '${failed.join('・')}を取得できませんでした';
+      _isLoading = false;
+    });
   }
 
   /// 「直近の予定」用のデータを取得する
@@ -167,6 +200,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
       });
     } catch (e) {
       debugPrint('直近の予定取得エラー: $e');
+      if (mounted) setState(() => _loadError = '直近の予定を取得できませんでした');
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -291,7 +325,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
             tooltip: '再読み込み',
             icon: const Icon(Icons.refresh),
             onPressed: () {
-              _loadAllEvents();
+              _loadAllEvents(forceStockEvents: true);
               _loadUpcoming(force: true);
             },
           ),
@@ -301,6 +335,12 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
         children: [
           // APIエラーバナー（エラーの時だけ表示）
           if (!widget.apiAvailable) ApiErrorBanner(message: widget.apiErrorMsg),
+          // 取得に失敗したとき（以前は何も出ず、予定が無いように見えていた）
+          if (_loadError != null)
+            ApiErrorBanner(
+              message: _loadError!,
+              note: '右上の再読み込みボタンで取り直せます。',
+            ),
 
           // 表示モード切替（カレンダー / 直近の予定）
           _buildModeSwitch(),
