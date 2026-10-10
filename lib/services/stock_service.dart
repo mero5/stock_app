@@ -660,27 +660,6 @@ class StockService {
     }
   }
 
-  /// YouTube動画の字幕をAIで要約する
-  ///
-  /// 動画のタイトルと字幕テキストをバックエンドに送信して
-  /// Gemini 2.5 Flashによる要約・センチメント分析を取得する。
-  ///
-  /// [title]      動画タイトル
-  /// [transcript] 動画の字幕テキスト
-  static Future<String> summarize(String title, String transcript) async {
-    try {
-      final res = await ApiClient.post(
-        Uri.parse('${Constants.backendUrl}/summarize'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'title': title, 'transcript': transcript}),
-      ).timeout(AppTimeouts.ai);
-      final data = jsonDecode(res.body);
-      return data['summary'] ?? '要約できませんでした';
-    } catch (e) {
-      return 'エラーが発生しました: $e';
-    }
-  }
-
   /// YouTubeチャンネルの最新動画一覧を取得する
   ///
   /// チャンネルIDを指定して最新の動画リストを取得する。
