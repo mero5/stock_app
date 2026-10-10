@@ -2,7 +2,15 @@ import 'package:flutter/material.dart';
 
 class ApiErrorBanner extends StatelessWidget {
   final String message;
-  const ApiErrorBanner({super.key, required this.message});
+
+  /// メッセージの下に添える一文。省略時はサーバー接続エラー用の文
+  final String note;
+
+  const ApiErrorBanner({
+    super.key,
+    required this.message,
+    this.note = '株価取得・AI分析などの機能が制限されています。',
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -16,7 +24,7 @@ class ApiErrorBanner extends StatelessWidget {
           const SizedBox(width: 10),
           Expanded(
             child: Text(
-              '$message\n株価取得・AI分析などの機能が制限されています。',
+              '$message\n$note',
               style: const TextStyle(
                 fontSize: 12,
                 color: Colors.red,

@@ -8,6 +8,7 @@ from services.technical import get_nikkei225_breadth
 from services.cache import cache_get, cache_set, market_cache_table
 from config.market_calendar import FOMC_DATES, BOJ_DATES, warn_if_missing
 from services.clock import today_jst
+from services.tse_calendar import month_end_rights_dates
 from services.market_data import drop_empty_rows
 from services.openai_params import openai_limit_params
 from config.ai_models import OPENAI_ANALYSIS_MODEL, OPENAI_ANALYSIS_EFFORT
@@ -27,7 +28,7 @@ def get_market_events(year: int, month: int):
     - 米国市場休場日（exchange-calendars）
     - 満月・新月（ephem）
     - SQ・メジャーSQ（計算）
-    - 権利落ち日（計算）
+    - 権利落ち日（東証の休業日から計算）
     - FOMC・日銀（固定データ）
     - 米雇用統計（毎月第1金曜）
     """
@@ -140,19 +141,12 @@ def get_market_events(year: int, month: int):
             break
         d += datetime.timedelta(days=1)
 
-    # ── 権利落ち日（月末から2営業日前） ──
-    biz_count = 0
-    d = last_day
-    while biz_count < 2:
-        if d.weekday() < 5:
-            biz_count += 1
-            if biz_count < 2:
-                d -= datetime.timedelta(days=1)
-        else:
-            d -= datetime.timedelta(days=1)
+    # ── 権利落ち日（月末が権利確定日の銘柄。東証の休業日を考えて計算 → services/tse_calendar.py） ──
+    # 以前は土日だけ見て「月末から2営業日前」を数えていて、祝日・年末の休場がずれていたので「（目安）」と出していた
+    rights = month_end_rights_dates(year, month)
     results.append({
-        "date": str(d),
-        "label": "権利落ち日（目安）",
+        "date": str(rights["ex_rights"]),
+        "label": "権利落ち日",
         "type": "rights",
         "color": "indigo",
     })
@@ -200,7 +194,8 @@ def get_upcoming_events(months: int = 6):
 
     months = max(1, min(int(months or 6), 12))
     today = today_jst()
-    cache_key = {'cache_key': f'upcoming_{months}_{today}'}
+    # v2：権利落ち日の計算を直した（古いキャッシュの「権利落ち日（目安）」を出さないため）
+    cache_key = {'cache_key': f'upcoming_v2_{months}_{today}'}
 
     cached = cache_get(market_cache_table, cache_key)
     if cached and isinstance(cached.get("events"), list):
@@ -270,64 +265,70 @@ def get_nikkei_monthly(year: int, month: int):
 # ===================================================
 # セクタートレンドAPI
 # ===================================================
+# 日本セクターETF（NEXT FUNDS TOPIX-17 シリーズ。1617〜1633 の17本）
+# 以前は 1615〜1633 に別の業種名を当てていて、17本中15本の名前がずれていた
+# （例：1617 は「食品」なのに「電気機器」としていた）。
+# 名前は JPX の ETF 一覧（https://www.jpx.co.jp/equities/products/etfs/issues/01-03.html）の
+# 連動指数「TOPIX-17 ○○」に合わせている。名前を変えたら services/technical.py の対応表と
+# lib/screens/market_screen.dart の説明文も直すこと
+JP_SECTOR_ETFS = {
+    "食品":                     "1617.T",
+    "エネルギー資源":           "1618.T",
+    "建設・資材":               "1619.T",
+    "素材・化学":               "1620.T",
+    "医薬品":                   "1621.T",
+    "自動車・輸送機":           "1622.T",
+    "鉄鋼・非鉄":               "1623.T",
+    "機械":                     "1624.T",
+    "電機・精密":               "1625.T",
+    "情報通信・サービスその他": "1626.T",
+    "電力・ガス":               "1627.T",
+    "運輸・物流":               "1628.T",
+    "商社・卸売":               "1629.T",
+    "小売":                     "1630.T",
+    "銀行":                     "1631.T",
+    "金融（除く銀行）":         "1632.T",
+    "不動産":                   "1633.T",
+}
+
+# 米国セクターETF（SPDR）
+US_SECTOR_ETFS = {
+    "テクノロジー":   "XLK",
+    "ヘルスケア":     "XLV",
+    "金融":           "XLF",
+    "エネルギー":     "XLE",
+    "一般消費財":     "XLY",
+    "生活必需品":     "XLP",
+    "公益":           "XLU",
+    "不動産(US)":     "XLRE",
+    "素材(US)":       "XLB",
+    "通信":           "XLC",
+    "資本財":         "XLI",
+    "AI/半導体":      "SOXX",
+}
+
 @router.get("/market/sectors")
 def get_sector_trends(period: str = "5d"):
     """
     日本・米国の主要セクターETFの騰落を取得して返す
 
-    29本のETFを1本ずつyfinanceから取得するので重い（数秒〜十数秒）。
+    29本のETF（日本17本・米国12本）を1本ずつyfinanceから取得するので重い（数秒〜十数秒）。
     しかもアプリはAI診断・ポートフォリオ診断のたびにこのAPIを呼ぶので、
     15分キャッシュする（騰落率は15分程度の遅れで十分）。
     """
     import datetime
 
     period = "1mo" if period == "1mo" else "5d"
-    cache_key = {'cache_key': f'sectors_{period}'}
+    # v2：日本のセクター名を TOPIX-17 の正しい名前に直した（古い名前のキャッシュを読まないため）
+    cache_key = {'cache_key': f'sectors_v2_{period}'}
     cached = cache_get(market_cache_table, cache_key)
     if cached and isinstance(cached.get("jp"), list):
         print(f"セクター: キャッシュヒット（{period}）")
         return {"jp": cached["jp"], "us": cached.get("us", [])}
 
-    # 日本セクターETF（東証ETF）
-    jp_sectors = {
-        "銀行":       "1615.T",
-        "電気機器":   "1617.T",
-        "自動車":     "1622.T",
-        "不動産":     "1621.T",
-        "食品":       "1619.T",
-        "医薬品":     "1620.T",
-        "情報通信":   "1618.T",
-        "素材":       "1623.T",
-        "鉄鋼・非鉄": "1629.T",
-        "化学":       "1624.T",
-        "機械":       "1625.T",
-        "小売":       "1626.T",
-        "サービス":   "1627.T",
-        "海運・空運": "1628.T",
-        "鉱業":       "1630.T",
-        "建設":       "1631.T",
-        "水産・農林": "1633.T",
-    }
-
-    # 米国セクターETF（SPDR）
-    us_sectors = {
-        "テクノロジー":   "XLK",
-        "ヘルスケア":     "XLV",
-        "金融":           "XLF",
-        "エネルギー":     "XLE",
-        "一般消費財":     "XLY",
-        "生活必需品":     "XLP",
-        "公益":           "XLU",
-        "不動産(US)":     "XLRE",
-        "素材(US)":       "XLB",
-        "通信":           "XLC",
-        "資本財":         "XLI",
-        "AI/半導体":      "SOXX",
-    }
-
     result = {"jp": [], "us": []}
 
-    for name, ticker_code in {**jp_sectors, **us_sectors}.items():
+    for name, ticker_code in {**JP_SECTOR_ETFS, **US_SECTOR_ETFS}.items():
         try:
             ticker = yf.Ticker(ticker_code)
             hist = drop_empty_rows(ticker.history(period="1mo" if period == "1mo" else "6d"))
@@ -353,7 +354,7 @@ def get_sector_trends(period: str = "5d"):
                 ) if len(hist) >= 2 else change_pct,
             }
 
-            if ticker_code in us_sectors.values():
+            if ticker_code in US_SECTOR_ETFS.values():
                 result["us"].append(item)
             else:
                 result["jp"].append(item)

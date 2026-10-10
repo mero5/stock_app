@@ -307,7 +307,7 @@ def get_accuracy_stats(user_id: str = "") -> dict:
 
     items = [_from_decimal(i) for i in items]
     if user_id:
-        items = [i for i in items if not i.get("user_id") or i.get("user_id") == user_id]
+        items = [i for i in items if _is_own(i, user_id)]
 
     done = [i for i in items if i.get("status") == "evaluated"]
     pending = [i for i in items if i.get("status") != "evaluated"]
@@ -371,10 +371,24 @@ def get_accuracy_stats(user_id: str = "") -> dict:
     }
 
 
-def get_recent_predictions(limit: int = 30, code: str = "") -> list:
-    """直近の予測を新しい順に返す（成績画面の履歴表示用）"""
+def _is_own(item: dict, user_id: str) -> bool:
+    """
+    その予測を、このユーザーの成績・履歴に含めるか
+
+    user_id を記録する前の古い予測（user_id なし）は含める（get_accuracy_stats と同じ扱い）。
+    """
+    return not user_id or not item.get("user_id") or item.get("user_id") == user_id
+
+
+def get_recent_predictions(limit: int = 30, code: str = "", user_id: str = "") -> list:
+    """
+    直近の予測を新しい順に返す（成績画面の履歴表示用）
+
+    [user_id] 指定するとその人の予測だけを返す。以前は絞っておらず、
+              成績画面の履歴に他のユーザーの予測も出ていた（K-48）
+    """
     try:
-        if code:
+        if code and not user_id:
             from boto3.dynamodb.conditions import Key
             res = predictions_table.query(
                 KeyConditionExpression=Key("code").eq(str(code)),
@@ -383,8 +397,11 @@ def get_recent_predictions(limit: int = 30, code: str = "") -> list:
             )
             items = res.get("Items", [])
         else:
-            # 1ページ（1MB）目だけを並べ替えると「最新」にならないので全件読む
+            # 1ページ（1MB）目だけを並べ替えると「最新」にならないので全件読む。
+            # ユーザーで絞るときも、絞る前に件数を切ると足りなくなるので全件読んでから絞る
             items = _scan_all()
+            items = [i for i in items
+                     if _is_own(i, user_id) and (not code or str(i.get("code")) == str(code))]
             items.sort(key=lambda i: str(i.get("predicted_at", "")), reverse=True)
             items = items[:limit]
 

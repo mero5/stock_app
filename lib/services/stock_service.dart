@@ -66,6 +66,18 @@ class StockService {
     }
   }
 
+  /// HTTP 200 なら JSON を読んで返す。200 以外は例外を投げる
+  ///
+  /// スケジュール用の取得（イベント・日経平均）は、以前は失敗しても空のリストを返していて、
+  /// 画面には何も出ず「予定が無い」ように見えていた（K-54）。失敗は例外にして、画面でエラーを出す。
+  /// Lambda に断られたとき（同時実行数の上限）も 200 以外で返る。
+  static dynamic _decodeOk(http.Response res) {
+    if (res.statusCode != 200) {
+      throw Exception('HTTP ${res.statusCode}: ${res.body}');
+    }
+    return jsonDecode(res.body);
+  }
+
   /// 通信そのものが失敗したときのエラーMapを作る
   static Map<String, dynamic> _networkError(Object e) {
     if (e is TimeoutException) {
@@ -175,36 +187,82 @@ class StockService {
   ///
   /// [code] 銘柄コード（5桁の日本株・英字の米国株）
   static Future<Stock> getStockInfo(String code) async {
-    // デフォルト値（取得失敗時に使う）
-    String name = code;
+    try {
+      // 銘柄名と株価を順番に取得
+      final name = await getName(code);
+      final priceData = await getPrice(code);
+      return stockFromQuote(code, name, priceData);
+    } catch (_) {
+      // エラー時はデフォルト値のまま返す（ウォッチリストが消えないようにする）
+      return Stock(code: code, name: code);
+    }
+  }
+
+  /// ウォッチリスト用：全銘柄の銘柄名と株価を1回の通信でまとめて取得する（/stock/quotes）
+  ///
+  /// 以前は銘柄ごとに getStockInfo を全部同時に呼んでいた（10銘柄なら20回の通信）。
+  /// バックエンド（Lambda）の同時実行数の上限を超えた分が断られ、
+  /// 株価が「---」・銘柄名がコードのままになっていたため、1回にまとめた。
+  ///
+  /// 通信に失敗した・バックエンドが古くてこのAPIが無いときは例外を投げる
+  /// （呼び出し側で getStockInfo による1件ずつの取得に切り替える）。
+  ///
+  /// [codes] 銘柄コードのリスト。戻り値は同じ順の Stock のリスト
+  static Future<List<Stock>> getWatchlistQuotes(List<String> codes) async {
+    if (codes.isEmpty) return [];
+    final res = await ApiClient.get(
+      Uri.parse(
+        '${Constants.backendUrl}/stock/quotes?codes=${Uri.encodeComponent(codes.join(','))}',
+      ),
+    ).timeout(AppTimeouts.api);
+    if (res.statusCode != 200) {
+      throw Exception('ウォッチリスト取得エラー: HTTP ${res.statusCode}');
+    }
+    final data = jsonDecode(res.body);
+    final quotes = data is Map ? data['quotes'] : null;
+    if (quotes is! List) {
+      throw Exception('ウォッチリスト取得エラー: 想定外の応答 ${res.body}');
+    }
+    final byCode = <String, Map<String, dynamic>>{
+      for (final q in quotes.whereType<Map>())
+        q['code'].toString(): Map<String, dynamic>.from(q),
+    };
+    return codes.map((code) {
+      final q = byCode[code];
+      if (q == null) return Stock(code: code, name: code);
+      return stockFromQuote(code, q['name']?.toString() ?? code, q);
+    }).toList();
+  }
+
+  /// 銘柄名と株価データ（price・change・change_pct）を、画面表示用の Stock にする
+  ///
+  /// [priceData] /stock/price または /stock/quotes の1件。取れなかった項目は null
+  @visibleForTesting
+  static Stock stockFromQuote(
+    String code,
+    String name,
+    Map<String, dynamic> priceData,
+  ) {
     String price = '---';
     String change = '';
     String changePct = '';
     bool isPositive = true;
 
-    try {
-      // 銘柄名と株価を順番に取得
-      name = await getName(code);
-      final priceData = await getPrice(code);
+    // 株価が取得できた場合のみ更新
+    if (priceData['price'] is num) {
+      price = (priceData['price'] as num).toStringAsFixed(0);
+    }
 
-      // 株価が取得できた場合のみ更新
-      if (priceData['price'] != null) {
-        price = (priceData['price'] as num).toStringAsFixed(0);
-      }
-
-      // 前日比が取得できた場合のみ更新
-      if (priceData['change'] != null) {
-        final c = priceData['change'] as num;
-        final cp = priceData['change_pct'] as num;
-        isPositive = c >= 0;
-        // プラスの場合は「+」を付けて表示
-        change = c >= 0 ? '+${c.toStringAsFixed(1)}' : c.toStringAsFixed(1);
-        changePct = cp >= 0
-            ? '+${cp.toStringAsFixed(2)}%'
-            : '${cp.toStringAsFixed(2)}%';
-      }
-    } catch (_) {
-      // エラー時はデフォルト値のまま返す（ウォッチリストが消えないようにする）
+    // 前日比が取得できた場合のみ更新
+    if (priceData['change'] is num && priceData['change_pct'] is num) {
+      final c = priceData['change'] as num;
+      final cp = priceData['change_pct'] as num;
+      isPositive = c >= 0;
+      // プラスの場合は「+」を付けて表示
+      change = c >= 0 ? '+${c.toStringAsFixed(1)}' : c.toStringAsFixed(1);
+      changePct = cp >= 0
+          ? '+${cp.toStringAsFixed(2)}%'
+          : '${cp.toStringAsFixed(2)}%';
     }
 
     return Stock(
@@ -220,6 +278,7 @@ class StockService {
   /// 銘柄のイベント（決算・配当落ち日）を取得する
   ///
   /// スケジュール画面のウォッチリスト銘柄のイベント表示に使用。
+  /// 失敗したら例外を投げる（呼び出し側でエラーを出す）。
   ///
   /// [codes] 銘柄コードのリスト
   static Future<List<Map<String, dynamic>>> getStockEvents(
@@ -233,11 +292,10 @@ class StockService {
           '${Constants.backendUrl}/stock/events?codes=${Uri.encodeComponent(codesParam)}',
         ),
       ).timeout(AppTimeouts.api);
-      final List data = jsonDecode(res.body);
-      return List<Map<String, dynamic>>.from(data);
+      return List<Map<String, dynamic>>.from(_decodeOk(res) as List);
     } catch (e) {
       debugPrint('イベント取得エラー: $e');
-      return [];
+      rethrow;
     }
   }
 
@@ -435,11 +493,10 @@ class StockService {
           '${Constants.backendUrl}/market/events?year=$year&month=$month',
         ),
       ).timeout(AppTimeouts.api);
-      final List data = jsonDecode(res.body);
-      return List<Map<String, dynamic>>.from(data);
+      return List<Map<String, dynamic>>.from(_decodeOk(res) as List);
     } catch (e) {
       debugPrint('マーケットイベント取得エラー: $e');
-      return [];
+      rethrow;
     }
   }
 
@@ -473,16 +530,19 @@ class StockService {
 
   /// AI予測の履歴を取得する
   ///
-  /// [code] 指定するとその銘柄の履歴だけを返す
+  /// [code]   指定するとその銘柄の履歴だけを返す
+  /// [userId] 自分の予測だけに絞る（渡さないと全ユーザーの予測が返る。K-48）
   static Future<List<Map<String, dynamic>>> getPredictionHistory({
     int limit = 30,
     String code = '',
+    String userId = '',
   }) async {
     try {
       final res = await ApiClient.get(
         Uri.parse(
           '${Constants.backendUrl}/stats/predictions'
-          '?limit=$limit&code=${Uri.encodeComponent(code)}',
+          '?limit=$limit&code=${Uri.encodeComponent(code)}'
+          '&userId=${Uri.encodeComponent(userId)}',
         ),
       ).timeout(AppTimeouts.api);
       final data = jsonDecode(res.body);
@@ -507,11 +567,10 @@ class StockService {
       final res = await ApiClient.get(
         Uri.parse('${Constants.backendUrl}/market/upcoming?months=$months'),
       ).timeout(AppTimeouts.api);
-      final List data = jsonDecode(res.body);
-      return List<Map<String, dynamic>>.from(data);
+      return List<Map<String, dynamic>>.from(_decodeOk(res) as List);
     } catch (e) {
       debugPrint('直近イベント取得エラー: $e');
-      return [];
+      rethrow;
     }
   }
 
@@ -531,10 +590,10 @@ class StockService {
           '${Constants.backendUrl}/nikkei/monthly?year=$year&month=$month',
         ),
       ).timeout(AppTimeouts.api);
-      return jsonDecode(res.body) as Map<String, dynamic>;
+      return _decodeOk(res) as Map<String, dynamic>;
     } catch (e) {
       debugPrint('日経平均取得エラー: $e');
-      return {};
+      rethrow;
     }
   }
 
@@ -608,27 +667,6 @@ class StockService {
           .toList();
     } catch (_) {
       return [];
-    }
-  }
-
-  /// YouTube動画の字幕をAIで要約する
-  ///
-  /// 動画のタイトルと字幕テキストをバックエンドに送信して
-  /// Gemini 2.5 Flashによる要約・センチメント分析を取得する。
-  ///
-  /// [title]      動画タイトル
-  /// [transcript] 動画の字幕テキスト
-  static Future<String> summarize(String title, String transcript) async {
-    try {
-      final res = await ApiClient.post(
-        Uri.parse('${Constants.backendUrl}/summarize'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'title': title, 'transcript': transcript}),
-      ).timeout(AppTimeouts.ai);
-      final data = jsonDecode(res.body);
-      return data['summary'] ?? '要約できませんでした';
-    } catch (e) {
-      return 'エラーが発生しました: $e';
     }
   }
 

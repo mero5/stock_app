@@ -44,3 +44,44 @@ def first_earnings_date(calendar):
     if hasattr(first, "hour") and hasattr(first, "date"):
         first = first.date()
     return str(first)[:10]
+
+
+def dividend_yield_pct(info: dict):
+    """
+    yfinance の info から配当利回りを「%」で返す（例：3.44 は 3.44%）。分からなければ None
+
+    yfinance の dividendYield は、0.2.5x 以降の版で単位が「割合（0.0344）」から「%（3.44）」に変わった。
+    以前は割合のつもりで ×100 していたため、トヨタが「344%」になっていた（K-46）。
+    版によって単位が変わる値には頼らず、年間配当額（dividendRate）÷ 株価で計算する。
+    年間配当額が無いときだけ dividendYield（今の版の「%」）を使う。
+    """
+    info = info or {}
+    rate = info.get("dividendRate")
+    price = info.get("currentPrice") or info.get("regularMarketPrice") or info.get("previousClose")
+    try:
+        if rate is not None and price:
+            return round(float(rate) / float(price) * 100, 2)
+        if info.get("dividendYield") is not None:
+            return round(float(info["dividendYield"]), 2)
+    except (TypeError, ValueError, ZeroDivisionError) as e:
+        print(f"配当利回りの計算エラー: {e}")
+    return None
+
+
+def week52_range(info: dict, highs=None, lows=None):
+    """
+    52週（約1年）の高値・安値を (高値, 安値) で返す。分からなければ (None, None)
+
+    以前は画面・APIで手元にある期間（3か月・6か月）の高値・安値を「52週」として出していた（K-50）。
+    yfinance の info にある本当の52週の値（fiftyTwoWeekHigh / fiftyTwoWeekLow）を優先し、
+    無いときだけ渡された高値・安値の一覧から求める。
+    """
+    info = info or {}
+    high = info.get("fiftyTwoWeekHigh")
+    low = info.get("fiftyTwoWeekLow")
+    if high is None and highs:
+        high = max(highs)
+    if low is None and lows:
+        low = min(lows)
+    return (round(float(high), 2) if high is not None else None,
+            round(float(low), 2) if low is not None else None)
