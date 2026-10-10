@@ -8,6 +8,9 @@ class Stock {
   final String changePct;
   final bool isPositive;
 
+  /// 銘柄の画像（会社の Web サイトのアイコン）の URL。分からなければ null
+  final String? logoUrl;
+
   Stock({
     required this.code,
     required this.name,
@@ -15,6 +18,7 @@ class Stock {
     this.change = "",
     this.changePct = "",
     this.isPositive = true,
+    this.logoUrl,
   });
 
   factory Stock.fromMap(Map<String, String> map) {
@@ -25,6 +29,7 @@ class Stock {
       change: map['change'] ?? '',
       changePct: map['change_pct'] ?? '',
       isPositive: map['is_positive'] != 'false',
+      logoUrl: map['logo_url'],
     );
   }
 
@@ -36,6 +41,7 @@ class Stock {
       'change': change,
       'change_pct': changePct,
       'is_positive': isPositive ? 'true' : 'false',
+      'logo_url': ?logoUrl,
     };
   }
 
