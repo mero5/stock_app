@@ -16,6 +16,7 @@ import 'package:provider/provider.dart';
 import 'package:amplify_flutter/amplify_flutter.dart';
 import '../viewmodels/home_viewmodel.dart';
 import '../models/stock.dart';
+import '../services/app_config_service.dart';
 import '../services/stock_service.dart';
 import '../services/watchlist_service.dart';
 import '../utils/formatter.dart';
@@ -61,6 +62,8 @@ class _HomeScreenState extends State<HomeScreen> {
       NoticeDialog.showIfUnread(context);
     });
     _setUpPush();
+    // どの画面を WebView 版で開くか（失敗したら全部ネイティブのまま）
+    AppConfigService.load();
   }
 
   /// プッシュ通知（株価アラート）の準備

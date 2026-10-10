@@ -72,6 +72,7 @@ config/          設定値・定数（タイムアウト、お知らせ、日程
 | `user.py` | ユーザーのプロファイル | `/user/profile` |
 | `youtube.py` | YouTube チャンネル・動画要約 | `/channels/*` `/summaries` `/summarize` |
 | `notices.py` | アプリ内のお知らせ | `/notices` |
+| `web.py` | WebView で表示する画面のHTML・共通CSS/JS、アプリの表示設定 | `/web/{page}` `/web/static/{file}` `/app/config` |
 | `price_alerts.py` | 株価アラート・プッシュ通知の宛先（**ログインのトークン必須**。userId はトークンの持ち主） | `/alerts` `/alerts/update` `/alerts/delete` `/push/token` `/push/token/delete` `/push/test` |
 
 新しいAPIは、役割の合うルーターに足す。どれにも合わない場合だけ新しいルーターを作り、`main.py` で登録する。
@@ -111,6 +112,8 @@ config/          設定値・定数（タイムアウト、お知らせ、日程
 | （アプリ）バックエンド・Lambda への通信 | `lib/services/api_client.dart` の `ApiClient.get` / `ApiClient.post`（`http.get` / `http.post` を直接呼ばない） | ログインのトークン（Authorization ヘッダー）が付かず、バックエンドで本人確認できない（段階2以降は拒否される） |
 | （アプリ）プロファイルの有無で行き先・保存を決める | `UserProfileService.fetchProfile()`（「登録あり・未登録・エラー」を `ProfileFetchStatus` で返す）。表示だけなら `getProfile()`（未登録・エラーは null） | `getProfile()` はエラーも null（＝未登録）になる。行き先の判断に使うと、登録済みのユーザーが初回設定に進み、既定値で上書き保存してしまう（K-36）。バックエンドの `/user/profile` も、エラーのときに `"exists": false` を返さない |
 | （アプリ）通信の待ち時間 | `lib/config/timeouts.dart` の `AppTimeouts.api`（40秒）／`AppTimeouts.ai`（120秒）。`StockService.aiTimeout` は `AppTimeouts.ai` の別名 | 付けないと、サーバーが応答しないときに読み込み中のまま止まる（最悪 Lambda の15分）。バックエンドのタイムアウトより長くしないと、バックエンドのエラーを受け取れない |
+| （アプリ）画面をバックエンドのHTMLで表示する | `lib/widgets/web_page_view.dart` の `WebPageView`（開く・開かないは `lib/services/app_config_service.dart` の `AppConfigService.useWeb(WebScreen.xxx)`） | 自分で WebView を作ると、トークンの受け渡し・開いてよいURLの制限・エラー表示が漏れる |
+| （WebView のページ）API の呼び出し・要素の作成 | `backend/web/static/bridge.js` の `StockApp.fetchJson()` / `StockApp.el()` | トークンが付かない・待ち時間が無い・`innerHTML` で文字を入れて HTML として解釈される |
 
 ---
 
@@ -140,6 +143,24 @@ models/       データの型（Stock など）
 **現状と新しく書くときのルール**：ViewModel があるのは `home` / `detail` / `portfolio` だけで、他の画面は StatefulWidget が直接 service を呼んでいる。既存はそのままでよいが、
 - **画面から直接 `http` を呼ばない。** 通信は必ず `services/` に書く
 - 状態が複雑な画面（読み込み・エラー・複数のAPI）を新しく作るときは ViewModel を作り、`main.dart` の `MultiProvider` に登録する
+
+### WebView の画面（バックエンドのHTMLで表示する画面）
+
+アプリのリリース無しで直せるように、「見る」中心の画面は中身をバックエンドのHTMLで表示する（2026-10〜、1画面ずつ移す）。
+
+```
+アプリ：XxxScreen ── AppConfigService.useWeb(WebScreen.xxx) ─┬─ true  → WebPageView('/web/xxx')
+                                                            └─ false → 今までのネイティブの画面
+バックエンド：/web/xxx → backend/web/pages/xxx.html（＋ static/app.css・bridge.js・xxx.js）
+              /app/config → config/web_screens.py（画面ごとのオン・オフ）
+```
+
+- **ネイティブのまま残すもの**：ログイン・初回設定・下のタブ・検索・設定・株価アラート・プッシュ通知（App Store の審査で「Webサイトをくるんだだけのアプリ」とされないため。端末の機能を使うため）
+- **ネイティブの画面は消さない。** `web_screens.py` を False にすれば戻せるようにしておく。アプリの Web版（`kIsWeb`：PRのプレビュー・E2E）は常にネイティブの画面を使う
+- **ページは既存のAPIをそのまま呼ぶ。** 画面のためだけのデータAPIを作らない。表示する項目・文言はネイティブ版と同じにする（仕様を変えない）
+- ページのJSは `bridge.js` の `StockApp.fetchJson()`（トークン・待ち時間付き）で API を呼び、文字は `StockApp.el()`（`textContent`）で入れる。`innerHTML` に API の値を入れない
+- `<script>` はファイルに分ける（ページの CSP が `script-src 'self'` のため、HTML の中に直接書いたJSは動かない）
+- 色・文字は `static/app.css` の `:root` を使う（`AppTheme` と同じ値）
 
 ### 大きいファイルの扱い
 
@@ -181,6 +202,9 @@ models/       データの型（Stock など）
 | `/stock/name`・`/stock/price` の中身 | `/stock/quotes`（同じ関数を呼んでまとめて返している）⇔ `StockService.stockFromQuote`（表示用の整形を共有） |
 | 画面の文言（ボタン名など） | E2Eの画面テスト（`stock-app-e2e`） |
 | ユーザーに見える変更 | `config/notices.py` にお知らせを追加 |
+| 色・文字の決まり（`AppTheme`） | `backend/web/static/app.css` の `:root`（WebView の画面も同じ見た目にするため） |
+| WebView 版の画面を足す | `backend/config/web_screens.py` のキー ⇔ `lib/services/app_config_service.dart` の `WebScreen`（名前をそろえる）⇔ `backend/web/pages/` ・ `static/`（`tests/test_web_pages.py` にも足す） |
+| WebView 版がある画面の表示内容 | ネイティブ版（`lib/screens/xxx_screen.dart`）**と** Web版（`backend/web/static/xxx.js`）の両方 |
 | 依存ライブラリ | `requirements.txt` **と** `requirements-lambda.txt` |
 | OpenAI のモデル | `config/ai_models.py`（考えるモデル⇔GPT-4o系を変えるときは `services/openai_params.py` の判定も確認）⇔ 料金・速さが変わるので `OPENAI_TIMEOUT_SEC` と `OPENAI_REASONING_TOKEN_BUDGET` を見直す |
 | Flutter のバージョン | `.github/workflows/ci.yml` ⇔ `.github/workflows/preview.yml` ⇔ E2E の `e2e.yml`（`stock-app-e2e`） |

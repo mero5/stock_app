@@ -1,0 +1,23 @@
+<!doctype html>
+<!--
+  お知らせ履歴（WebView 版）
+  アプリの 設定 → お知らせ履歴 で開く。タイトルと再読み込みボタンはアプリ側（NoticeHistoryScreen）にある。
+  中身はネイティブ版と同じ：/notices の全件を新しい順に、タイトル・日付・見出し＋箇条書き・補足を出す。
+-->
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:"
+    />
+    <title>お知らせ履歴</title>
+    <link rel="stylesheet" href="static/app.css" />
+  </head>
+  <body>
+    <main id="content"><div class="spinner" aria-label="読み込み中"></div></main>
+    <script src="static/bridge.js"></script>
+    <script src="static/notices.js"></script>
+  </body>
+</html>
