@@ -7,6 +7,11 @@ from openai import OpenAI
 import yfinance as yf
 import google.generativeai as genai
 from config.timeouts import GEMINI_TIMEOUT_SEC
+from config.ai_models import (
+    OPENAI_ANALYSIS_MODEL, OPENAI_LIGHT_MODEL,
+    OPENAI_ANALYSIS_EFFORT, OPENAI_LIGHT_EFFORT,
+)
+from services.openai_params import openai_limit_params
 from services.technical import (
     get_technical_data, get_fundamental_data,
     get_macro_data, get_nikkei225_breadth,
@@ -92,13 +97,16 @@ def error_response(payload: dict) -> Response:
 
 
 def call_openai_json(prompt: str, system: str, max_tokens: int = 4000,
-                     model: str = "gpt-4o"):
+                     model: str = OPENAI_ANALYSIS_MODEL,
+                     effort: str = OPENAI_ANALYSIS_EFFORT):
     """
     OpenAIを呼んでJSONを取得する共通処理。
 
     ・response_format で JSON 以外を返させない
     ・max_tokens 切れ（finish_reason == "length"）を専用エラーで検出する
       → これを見逃すと「途中で切れたJSON」をパースして毎回失敗していた
+    ・[max_tokens] は回答（JSON）の分。考えるモデルでは思考の分が自動で足される
+      （services/openai_params.py）。[effort] は考える量
 
     戻り値は (パース結果, トークン使用量)。
     使用量は予測記録に残して実コストを追えるようにする。
@@ -109,8 +117,8 @@ def call_openai_json(prompt: str, system: str, max_tokens: int = 4000,
             {"role": "system", "content": system},
             {"role": "user",   "content": prompt},
         ],
-        max_tokens=max_tokens,
         response_format={"type": "json_object"},
+        **openai_limit_params(model, max_tokens, effort),
     )
     choice = res.choices[0]
     if choice.finish_reason == "length":
@@ -172,7 +180,7 @@ async def get_ai_analysis(code: str):
 
                 # タイトル翻訳
                 title_res = openai_client.chat.completions.create(
-                    model="gpt-4o-mini",
+                    model=OPENAI_LIGHT_MODEL,
                     messages=[
                         {
                             "role": "system",
@@ -183,7 +191,7 @@ async def get_ai_analysis(code: str):
                             "content": str(titles_en)
                         }
                     ],
-                    max_tokens=500,
+                    **openai_limit_params(OPENAI_LIGHT_MODEL, 500, OPENAI_LIGHT_EFFORT),
                 )
                 raw_titles = title_res.choices[0].message.content.strip()
                 raw_titles = raw_titles.replace("```json", "").replace("```", "").strip()
@@ -194,7 +202,7 @@ async def get_ai_analysis(code: str):
 
                 # 要約翻訳
                 summary_res = openai_client.chat.completions.create(
-                    model="gpt-4o-mini",
+                    model=OPENAI_LIGHT_MODEL,
                     messages=[
                         {
                             "role": "system",
@@ -205,7 +213,7 @@ async def get_ai_analysis(code: str):
                             "content": str(summaries_en)
                         }
                     ],
-                    max_tokens=3000,
+                    **openai_limit_params(OPENAI_LIGHT_MODEL, 3000, OPENAI_LIGHT_EFFORT),
                 )
                 raw_summaries = summary_res.choices[0].message.content.strip()
                 raw_summaries = raw_summaries.replace("```json", "").replace("```", "").strip()
@@ -410,7 +418,8 @@ PER: {per}倍 / PBR: {pbr}倍 / ROE: {roe}
             prompt,
             system="あなたは日本株・米国株に詳しい投資アドバイザーです。必ずJSON形式のみで返してください。",
             max_tokens=3000,
-            model="gpt-4o-mini",
+            model=OPENAI_LIGHT_MODEL,
+            effort=OPENAI_LIGHT_EFFORT,
         )
         return result
     except json.JSONDecodeError as e:

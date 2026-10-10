@@ -86,6 +86,8 @@ config/          設定値・定数（タイムアウト、お知らせ、日程
 | DynamoDB のキャッシュ | `services/cache.py` の `cache_get()` / `cache_set()` | 期限切れの判定・Decimal 変換を毎回書くことになる |
 | AI系のエラーレスポンス | `routers/ai.py` の `classify_error()` / `error_response()` | アプリがエラーを結果として扱ってしまう |
 | OpenAI で JSON を受け取る | `routers/ai.py` の `call_openai_json()` | 途中で切れた JSON（`max_tokens` 切れ）を検出できない |
+| OpenAI のモデル名 | `config/ai_models.py` の `OPENAI_ANALYSIS_MODEL`（分析）/ `OPENAI_LIGHT_MODEL`（翻訳・相談）と考える量 `OPENAI_ANALYSIS_EFFORT` / `OPENAI_LIGHT_EFFORT` | 直書きすると、変えるときに漏れる |
+| OpenAI の出力上限・考える量 | `services/openai_params.py` の `openai_limit_params()` | 考えるモデル（GPT-5/6系）に `max_tokens` を送ると400エラー。思考の分を足さないと答えが空になる |
 | AI予測の記録・答え合わせ | `services/predictions.py` | 的中率の集計がずれる |
 | お知らせ | `config/notices.py` の `NOTICES`（version を +1） | — |
 | ログインのトークン確認 | `services/auth.py` の `verify_request_token()`（`main.py` のミドルウェアで全リクエストに実行し、結果は `request.state.auth`）。設定は `config/auth.py` | 自分で JWT を読むと、署名・期限・発行元・client_id の確認漏れが起きる |
@@ -162,6 +164,7 @@ models/       データの型（Stock など）
 | 画面の文言（ボタン名など） | E2Eの画面テスト（`stock-app-e2e`） |
 | ユーザーに見える変更 | `config/notices.py` にお知らせを追加 |
 | 依存ライブラリ | `requirements.txt` **と** `requirements-lambda.txt` |
+| OpenAI のモデル | `config/ai_models.py`（考えるモデル⇔GPT-4o系を変えるときは `services/openai_params.py` の判定も確認）⇔ 料金・速さが変わるので `OPENAI_TIMEOUT_SEC` と `OPENAI_REASONING_TOKEN_BUDGET` を見直す |
 | Flutter のバージョン | `.github/workflows/ci.yml` ⇔ `.github/workflows/preview.yml` ⇔ E2E の `e2e.yml`（`stock-app-e2e`） |
 | `ci.yml` のジョブ名 | GitHub のルールセット「main を守る」の必須チェック（名前が合わないと全PRがマージ不可） |
 
