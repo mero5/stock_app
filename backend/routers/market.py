@@ -8,6 +8,7 @@ from services.technical import get_nikkei225_breadth
 from services.cache import cache_get, cache_set, market_cache_table
 from config.market_calendar import FOMC_DATES, BOJ_DATES, warn_if_missing
 from services.clock import today_jst
+from services.tse_calendar import month_end_rights_dates
 from services.market_data import drop_empty_rows
 from services.openai_params import openai_limit_params
 from config.ai_models import OPENAI_ANALYSIS_MODEL, OPENAI_ANALYSIS_EFFORT
@@ -27,7 +28,7 @@ def get_market_events(year: int, month: int):
     - 米国市場休場日（exchange-calendars）
     - 満月・新月（ephem）
     - SQ・メジャーSQ（計算）
-    - 権利落ち日（計算）
+    - 権利落ち日（東証の休業日から計算）
     - FOMC・日銀（固定データ）
     - 米雇用統計（毎月第1金曜）
     """
@@ -140,19 +141,12 @@ def get_market_events(year: int, month: int):
             break
         d += datetime.timedelta(days=1)
 
-    # ── 権利落ち日（月末から2営業日前） ──
-    biz_count = 0
-    d = last_day
-    while biz_count < 2:
-        if d.weekday() < 5:
-            biz_count += 1
-            if biz_count < 2:
-                d -= datetime.timedelta(days=1)
-        else:
-            d -= datetime.timedelta(days=1)
+    # ── 権利落ち日（月末が権利確定日の銘柄。東証の休業日を考えて計算 → services/tse_calendar.py） ──
+    # 以前は土日だけ見て「月末から2営業日前」を数えていて、祝日・年末の休場がずれていたので「（目安）」と出していた
+    rights = month_end_rights_dates(year, month)
     results.append({
-        "date": str(d),
-        "label": "権利落ち日（目安）",
+        "date": str(rights["ex_rights"]),
+        "label": "権利落ち日",
         "type": "rights",
         "color": "indigo",
     })
@@ -200,7 +194,8 @@ def get_upcoming_events(months: int = 6):
 
     months = max(1, min(int(months or 6), 12))
     today = today_jst()
-    cache_key = {'cache_key': f'upcoming_{months}_{today}'}
+    # v2：権利落ち日の計算を直した（古いキャッシュの「権利落ち日（目安）」を出さないため）
+    cache_key = {'cache_key': f'upcoming_v2_{months}_{today}'}
 
     cached = cache_get(market_cache_table, cache_key)
     if cached and isinstance(cached.get("events"), list):
