@@ -16,6 +16,9 @@
 // ============================================================
 
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
+
+import '../widgets/error_dialog.dart';
 
 class YoutubeDetailScreen extends StatelessWidget {
   /// YoutubeVideoListScreenから渡される要約データ
@@ -152,9 +155,7 @@ class YoutubeDetailScreen extends StatelessWidget {
               SizedBox(
                 width: double.infinity,
                 child: OutlinedButton.icon(
-                  onPressed: () {
-                    // TODO: url_launcherでYouTubeを開く実装を追加する
-                  },
+                  onPressed: () => _openYoutube(context, s['url']),
                   icon: const Icon(Icons.play_circle, color: Colors.red),
                   label: const Text(
                     'YouTubeで見る',
@@ -171,6 +172,28 @@ class YoutubeDetailScreen extends StatelessWidget {
   // ============================================================
   // ユーティリティ
   // ============================================================
+
+  /// 動画をYouTubeアプリで開く（入っていなければブラウザで開く）
+  ///
+  /// 以前はボタンの処理が空（TODO）のままで、押しても何も起きなかった。
+  /// 開けなかったときは、黙って終わらずにエラーを出す。
+  static Future<void> _openYoutube(BuildContext context, Object? url) async {
+    final uri = Uri.tryParse(url?.toString() ?? '');
+    var opened = false;
+    if (uri != null && uri.hasScheme) {
+      try {
+        opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
+      } catch (e) {
+        debugPrint('YouTubeを開けませんでした: $e');
+      }
+    }
+    if (opened || !context.mounted) return;
+    await ErrorDialog.show(
+      context,
+      message: 'YouTubeを開けませんでした。時間をおいてもう一度お試しください。',
+      detail: url?.toString(),
+    );
+  }
 
   /// ISO 8601形式の日付文字列を「YYYY/MM/DD HH:MM」形式に変換する
   ///
