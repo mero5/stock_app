@@ -7,7 +7,7 @@ from services.cache import (
     cache_get, cache_set,
     market_cache_table, stock_cache_table
 )
-from services.market_data import drop_empty_rows
+from services.market_data import drop_empty_rows, dividend_yield_pct
 import math
 
 
@@ -297,12 +297,17 @@ def get_technical_data(ticker_code: str) -> dict:
         return {}
 
 
+# ファンダメンタルのキャッシュの種類名。中身の形・単位を変えたら版を上げる
+FUNDAMENTAL_CACHE_TYPE = 'fundamental_v2'
+
+
 def get_fundamental_data(ticker_code: str) -> dict:
     """
     ファンダメンタル指標を取得（DynamoDBに24時間キャッシュ）
     """
     # キャッシュ確認
-    cached = cache_get(stock_cache_table, {'code': ticker_code, 'cache_type': 'fundamental'})
+    # v2：配当利回りの単位を直した（K-46）。古いキャッシュ（344% など）を読まないため
+    cached = cache_get(stock_cache_table, {'code': ticker_code, 'cache_type': FUNDAMENTAL_CACHE_TYPE})
     if cached:
       print(f"ファンダ {ticker_code}: キャッシュヒット")
       return sanitize(cached)
@@ -321,7 +326,7 @@ def get_fundamental_data(ticker_code: str) -> dict:
             "operating_margin": safe_float(info.get("operatingMargins",0) * 100) if info.get("operatingMargins") else None,
             "debt_ratio":       safe_float(info.get("debtToEquity")),
             "equity_ratio":     safe_float(info.get("bookValue")),
-            "dividend_yield":   safe_float(info.get("dividendYield", 0) * 100) if info.get("dividendYield")      else None,
+            "dividend_yield":   dividend_yield_pct(info),
             "fcf":              info.get("freeCashflow"),
             "target_price":     safe_float(info.get("targetMeanPrice")),
             "analyst_rating":   info.get("recommendationKey"),
@@ -353,7 +358,7 @@ def get_fundamental_data(ticker_code: str) -> dict:
         # 24時間キャッシュ（ファンダは変化が少ない）
         clean_result = sanitize(result)
         cache_set(stock_cache_table,
-                  {'code': ticker_code, 'cache_type': 'fundamental'},
+                  {'code': ticker_code, 'cache_type': FUNDAMENTAL_CACHE_TYPE},
                   clean_result, ttl_minutes=1440)
         return clean_result
     except Exception as e:
@@ -404,22 +409,23 @@ DEFAULT_PERIOD_DAYS = {
 # 一度もAIに渡っていなかったため、ここで対応表を持つ。
 # ===================================================
 
-# 英語セクター → 日本のセクターETF名（routers/market.py の jp_sectors のキー）
+# 英語セクター → 日本のセクターETF名（routers/market.py の JP_SECTOR_ETFS のキー＝TOPIX-17 の業種名）
+# 以前は日本のセクターETFの名前がずれていたので、ここも正しい業種に付け直した（K-45）
 SECTOR_EN_TO_JP = {
-    "Technology":             "電気機器",
-    "Communication Services": "情報通信",
-    "Financial Services":     "銀行",
+    "Technology":             "電機・精密",
+    "Communication Services": "情報通信・サービスその他",
+    "Financial Services":     "金融（除く銀行）",   # 銀行は industry の "bank" で先に決まる
     "Healthcare":             "医薬品",
-    "Consumer Cyclical":      "小売",
+    "Consumer Cyclical":      "小売",               # 自動車は industry の "auto" で先に決まる
     "Consumer Defensive":     "食品",
     "Industrials":            "機械",
-    "Basic Materials":        "化学",
-    "Energy":                 "鉱業",
+    "Basic Materials":        "素材・化学",
+    "Energy":                 "エネルギー資源",
     "Real Estate":            "不動産",
-    # Utilities は対応する日本のセクターETFが無いため未定義（→「不明」になる）
+    "Utilities":              "電力・ガス",
 }
 
-# 英語セクター → 米国セクターETF名（routers/market.py の us_sectors のキー）
+# 英語セクター → 米国セクターETF名（routers/market.py の US_SECTOR_ETFS のキー）
 SECTOR_EN_TO_US = {
     "Technology":             "テクノロジー",
     "Communication Services": "通信",
@@ -442,29 +448,37 @@ SECTOR_EN_TO_US = {
 #   複数キーワードを含む業種名（例："Farm & Heavy Construction Machinery"）が
 #   正しい方に倒れるよう、具体的なものから並べている。
 INDUSTRY_KEYWORD_TO_JP = [
-    (("auto",),                                              "自動車"),
+    (("auto",),                                              "自動車・輸送機"),
     (("bank",),                                              "銀行"),
-    (("semiconductor", "electronic", "electrical equipment",
-      "computer hardware", "appliance"),                     "電気機器"),
+    (("utilities",),                                         "電力・ガス"),
+    (("medical devices", "medical instruments",
+      "scientific & technical instruments", "semiconductor",
+      "electronic", "electrical equipment",
+      "computer hardware", "appliance"),                     "電機・精密"),
     (("machinery", "tools & accessories"),                   "機械"),
-    (("chemical",),                                          "化学"),
+    (("chemical", "paper", "textile", "rubber"),             "素材・化学"),
     (("steel", "aluminum", "copper", "industrial metals",
-      "metal fabrication"),                                  "鉄鋼・非鉄"),
+      "metal fabrication", "precious metals", "gold"),       "鉄鋼・非鉄"),
     (("drug", "pharmaceutical", "biotechnolog", "medical"),  "医薬品"),
-    (("software", "internet", "telecom", "information technology",
-      "entertainment", "media", "publishing"),               "情報通信"),
-    (("marine", "airline", "airport", "shipping",
-      "freight"),                                            "海運・空運"),
-    (("construction", "building"),                           "建設"),
-    (("oil", "gas", "coal", "uranium", "mining",
-      "precious metals"),                                    "鉱業"),
-    (("real estate", "reit"),                                "不動産"),
-    (("beverage", "food", "confectioner", "tobacco"),        "食品"),
-    (("farm products", "agricultur", "fish"),                "水産・農林"),
+    (("insurance", "capital markets", "asset management",
+      "credit services", "financial"),                       "金融（除く銀行）"),
+    (("conglomerate", "industrial distribution",
+      "trading", "wholesale"),                               "商社・卸売"),
+    # 「Internet Retail」が情報通信に倒れないよう、小売を情報通信より先に置く
     (("retail", "department store", "apparel",
-      "discount store", "grocery"),                          "小売"),
-    (("consulting", "staffing", "business services",
-      "security & protection", "education"),                 "サービス"),
+      "discount store", "grocery", "restaurant"),            "小売"),
+    (("software", "internet", "telecom", "information technology",
+      "entertainment", "media", "publishing", "advertising",
+      "consulting", "staffing", "business services",
+      "security & protection", "education", "leisure",
+      "lodging", "resorts"),                                 "情報通信・サービスその他"),
+    (("marine", "airline", "airport", "shipping", "freight",
+      "railroad", "trucking", "logistics"),                  "運輸・物流"),
+    (("construction", "building"),                           "建設・資材"),
+    (("oil", "gas", "coal", "uranium", "mining"),            "エネルギー資源"),
+    (("real estate", "reit"),                                "不動産"),
+    (("beverage", "food", "confectioner", "tobacco",
+      "farm products", "agricultur", "fish"),                "食品"),
 ]
 
 
