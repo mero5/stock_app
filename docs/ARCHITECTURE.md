@@ -107,6 +107,7 @@ config/          設定値・定数（タイムアウト、お知らせ、日程
 | （アプリ）エラーの表示 | `lib/widgets/error_dialog.dart` / `api_error_banner.dart` | 失敗しても何も出ない画面になる |
 | （アプリ）ログイン状態の確認 | `AuthService.hasValidSession()` / `lib/services/session_guard.dart` | `isSignedIn` は期限切れでも true のまま |
 | （アプリ）表示用の整形 | `lib/utils/formatter.dart` | 数字・日付の表示がばらつく |
+| （アプリ）色・文字・余白・角丸 | `lib/theme/app_theme.dart` の `AppTheme`（新しく書く部分は `Colors.blue` などを直書きせず `AppTheme.primary` / `AppTheme.hairline` などを使う） | デザインを変えるときに直し漏れが出る。2026-10 にデザインを刷新（白背景＋黒文字＋青・緑の差し色、影なしの細い線） |
 | 銘柄の画像 | バックエンド `services/stock_logo.py` の `get_logo_url()`（会社の Web サイト → Google のファビコンの URL。Web サイトは30日保存）／アプリ `lib/widgets/stock_logo.dart` の `StockLogo`（画像が無い・読めないときは頭文字の丸） | 銘柄ごとに yfinance の info を毎回呼ぶと遅い。画像が読めないときに空白になる |
 | （アプリ）バックエンド・Lambda への通信 | `lib/services/api_client.dart` の `ApiClient.get` / `ApiClient.post`（`http.get` / `http.post` を直接呼ばない） | ログインのトークン（Authorization ヘッダー）が付かず、バックエンドで本人確認できない（段階2以降は拒否される） |
 | （アプリ）プロファイルの有無で行き先・保存を決める | `UserProfileService.fetchProfile()`（「登録あり・未登録・エラー」を `ProfileFetchStatus` で返す）。表示だけなら `getProfile()`（未登録・エラーは null） | `getProfile()` はエラーも null（＝未登録）になる。行き先の判断に使うと、登録済みのユーザーが初回設定に進み、既定値で上書き保存してしまう（K-36）。バックエンドの `/user/profile` も、エラーのときに `"exists": false` を返さない |
