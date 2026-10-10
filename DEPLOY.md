@@ -62,8 +62,8 @@ curl -s https://<Function URL>/health
 |---|---|---|
 | タイムアウト | 60〜120 秒 | 15分（上限）にしておくと、外部APIで詰まったときに15分待ってから失敗する。短くしておけば早く失敗してログで原因を追える。アプリは AI 系を120秒で打ち切る |
 | メモリ | 1024 MB 以上 | pandas・numpy・yfinance を読み込む。Lambda はメモリに比例して CPU も増える |
-| 実行ロール | DynamoDB の `market_cache` / `stock_cache` / `user_profiles` / `ai_predictions` への読み書き | |
-| 環境変数 | 上の4つのAPIキー | |
+| 実行ロール | DynamoDB の `market_cache` / `stock_cache` / `user_profiles` / `ai_predictions` / `price_alerts` / `push_tokens` への読み書き、SSM の `/stock-app/fcm-service-account` の読み取り | |
+| 環境変数 | 上の4つのAPIキー、`FCM_PROJECT_ID`（Firebase のプロジェクトID） | |
 
 ### ログ
 
@@ -72,6 +72,48 @@ CloudWatch Logs のロググループ `/aws/lambda/<関数名>`。
 ```bash
 aws logs tail /aws/lambda/<関数名> --follow --region ap-northeast-1
 ```
+
+### 株価アラート（プッシュ通知）の準備（最初の1回だけ）
+
+株価アラートは、EventBridge Scheduler が5分おきに同じ Lambda を `{"task": "price_alert_check"}` で起こし、条件を満たしたら FCM（Firebase Cloud Messaging）で iPhone に通知する。準備が終わるまでは、アラートを登録できても通知は届かない。
+
+```mermaid
+flowchart LR
+  S[EventBridge Scheduler<br/>5分おき] -->|task: price_alert_check| L[Lambda stock-backend]
+  L --> D[(price_alerts / push_tokens)]
+  L -->|鍵を読む| P[SSM パラメータストア]
+  L -->|HTTP v1| F[FCM] --> A[APNs] --> I[iPhone]
+```
+
+**1. Apple・Firebase（コンソールで操作）**
+
+1. Apple Developer → Certificates, Identifiers & Profiles → Keys で、**Apple Push Notifications service (APNs)** にチェックした鍵を作り、`.p8` をダウンロードする（1回しかダウンロードできない）。Key ID と Team ID を控える
+2. Firebase コンソール（Web版のプレビューと同じプロジェクト）→ プロジェクトの設定 → 全般 → **iOS アプリを追加**（バンドルID `com.example.StockAnalysisApp`）
+3. 追加したアプリの `GoogleService-Info.plist` の `API_KEY`・`GOOGLE_APP_ID`・`GCM_SENDER_ID`・`PROJECT_ID` を `lib/config/firebase_options.dart` に入れる（秘密の値ではない。空のままだとアプリは通知の準備をしない）
+4. プロジェクトの設定 → Cloud Messaging → Apple アプリの構成 → **APNs 認証キー**に 1 の `.p8`・Key ID・Team ID を登録する
+5. プロジェクトの設定 → サービスアカウント → **新しい秘密鍵を生成**（JSON）。これはバックエンドが FCM を呼ぶための秘密の鍵。**リポジトリに入れない**
+6. Xcode で `ios/Runner.xcworkspace` を開き、Runner → Signing & Capabilities に **Push Notifications** と **Background Modes（Remote notifications）** が出ていることを確かめる（`Runner.entitlements` と `Info.plist` に設定済み。自動署名なら App ID にも反映される）
+
+**2. AWS（コマンド）**
+
+```bash
+REGION=ap-northeast-1
+FUNC=stock-backend
+
+# テーブル（オンデマンド課金。使った分だけ）
+aws dynamodb create-table --table-name price_alerts --region $REGION   --attribute-definitions AttributeName=userId,AttributeType=S AttributeName=alert_id,AttributeType=S   --key-schema AttributeName=userId,KeyType=HASH AttributeName=alert_id,KeyType=RANGE   --billing-mode PAY_PER_REQUEST
+aws dynamodb create-table --table-name push_tokens --region $REGION   --attribute-definitions AttributeName=userId,AttributeType=S AttributeName=token,AttributeType=S   --key-schema AttributeName=userId,KeyType=HASH AttributeName=token,KeyType=RANGE   --billing-mode PAY_PER_REQUEST
+# 使われていない端末の宛先を自動で消す（ttl 属性）
+aws dynamodb update-time-to-live --table-name push_tokens --region $REGION   --time-to-live-specification Enabled=true,AttributeName=ttl
+
+# FCM の秘密の鍵（1-5 の JSON）を SSM パラメータストアに置く（標準・無料）
+MSYS_NO_PATHCONV=1 aws ssm put-parameter --region $REGION --name /stock-app/fcm-service-account   --type SecureString --value file://firebase-service-account.json
+```
+
+- **Lambda の実行ロール**に、上の2つのテーブルへの読み書き（`GetItem` `PutItem` `UpdateItem` `DeleteItem` `Query` `Scan`）と、`ssm:GetParameter`（`arn:aws:ssm:ap-northeast-1:448161423247:parameter/stock-app/fcm-service-account`）を足す
+- **Lambda の環境変数**に `FCM_PROJECT_ID`（Firebase のプロジェクトID）を足す。`update-function-configuration --environment` は**全部の変数を置き換える**ので、コンソールで1つ足すほうが安全
+- **EventBridge Scheduler** でスケジュールを作る：`rate(5 minutes)`（一日中。市場が開いていない時間は Lambda の中ですぐ終わる）、ターゲットは Lambda `stock-backend`、入力は `{"task": "price_alert_check"}`、実行ロールはスケジューラーが作るものでよい。呼び出しは月に約8,600回で、Lambda の無料枠（月100万回）に収まる
+- 確認：`aws logs tail /aws/lambda/stock-backend --follow` で、5分おきに `[price_alert] {'alerts': …, 'codes': …, 'notified': …}` が出ればよい。アプリの 設定 → 株価アラート → 「テスト通知」で届くかも確かめる
 
 ## 2. 旧EC2（〜2026-10-09。記録）
 

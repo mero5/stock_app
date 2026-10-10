@@ -16,3 +16,5 @@ jpholiday
 exchange-calendars
 # Cognito のトークン確認（JWT の署名を確かめるので crypto 付き）
 PyJWT[crypto]
+# プッシュ通知（FCM）の認証トークンを取る（services/push.py）
+google-auth

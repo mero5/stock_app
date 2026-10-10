@@ -43,6 +43,8 @@ dependencies:
   provider: ^6.1.2
   # 「YouTubeで見る」ボタンで、YouTubeアプリ（無ければブラウザ）を開くため
   url_launcher: ^6.3.1
+  firebase_core: ^4.15.0
+  firebase_messaging: ^16.7.0
 
 dev_dependencies:
   flutter_test:

@@ -17,6 +17,8 @@ flowchart TB
   ddb[("DynamoDB<br/>キャッシュ・ユーザー設定・AI予測")]
   ext["外部API<br/>yfinance / J-Quants / OpenAI / Gemini / YouTube"]
   cognito["Cognito（Amplify）<br/>ログイン"]
+  sched["EventBridge Scheduler<br/>5分おき"]
+  fcm["FCM（Firebase）<br/>→ APNs → iPhone"]
 
   app -->|HTTP| api
   app -->|HTTP| wl
@@ -24,6 +26,8 @@ flowchart TB
   api --> ddb
   api --> ext
   wl --> ddb
+  sched -->|"{task: price_alert_check}"| api
+  api -->|プッシュ通知| fcm
 ```
 
 | 部分 | 場所 | 補足 |
@@ -68,6 +72,7 @@ config/          設定値・定数（タイムアウト、お知らせ、日程
 | `user.py` | ユーザーのプロファイル | `/user/profile` |
 | `youtube.py` | YouTube チャンネル・動画要約 | `/channels/*` `/summaries` `/summarize` |
 | `notices.py` | アプリ内のお知らせ | `/notices` |
+| `price_alerts.py` | 株価アラート・プッシュ通知の宛先（**ログインのトークン必須**。userId はトークンの持ち主） | `/alerts` `/alerts/update` `/alerts/delete` `/push/token` `/push/token/delete` `/push/test` |
 
 新しいAPIは、役割の合うルーターに足す。どれにも合わない場合だけ新しいルーターを作り、`main.py` で登録する。
 
@@ -96,6 +101,9 @@ config/          設定値・定数（タイムアウト、お知らせ、日程
 | AI予測の記録・答え合わせ | `services/predictions.py` | 的中率の集計がずれる |
 | お知らせ | `config/notices.py` の `NOTICES`（version を +1） | — |
 | ログインのトークン確認 | `services/auth.py` の `verify_request_token()`（`main.py` のミドルウェアで全リクエストに実行し、結果は `request.state.auth`）。設定は `config/auth.py` | 自分で JWT を読むと、署名・期限・発行元・client_id の確認漏れが起きる |
+| プッシュ通知を送る | `services/push.py` の `send_to_user()`（そのユーザーの全端末に FCM で送る。使えなくなった宛先は消す） | 端末の宛先（FCM トークン）は再インストール等で変わる。消さないと送れない宛先が溜まる |
+| 市場が開いている時間・その市場の日付 | `services/market_hours.py` の `is_market_open()` / `market_date()`（東証は営業日と前場・後場、米国は夏時間を自分で計算） | 閉まっている時間に yfinance を呼ぶと無駄。米国株は日本時間の夜〜朝にまたがるので、日本の日付で「1日1回」を数えると2回通知する |
+| （アプリ）プッシュ通知の準備・通知のタップ | `lib/services/push_service.dart` の `PushService`（iPhone だけ。Web・Android では何もしない） | Web で firebase_messaging を呼ぶとプレビュー・E2E が動かない |
 | （アプリ）エラーの表示 | `lib/widgets/error_dialog.dart` / `api_error_banner.dart` | 失敗しても何も出ない画面になる |
 | （アプリ）ログイン状態の確認 | `AuthService.hasValidSession()` / `lib/services/session_guard.dart` | `isSignedIn` は期限切れでも true のまま |
 | （アプリ）表示用の整形 | `lib/utils/formatter.dart` | 数字・日付の表示がばらつく |
@@ -151,6 +159,8 @@ models/       データの型（Stock など）
 | `user_profiles` | ユーザーのプロファイル（投資スタイル等） | なし |
 | `ai_predictions` | AI予測の記録（的中率の測定用） | なし（キャッシュではない） |
 | `stock_favorites` | ウォッチリスト（別の Lambda が読み書き） | なし |
+| `price_alerts` | 株価アラート（キー：`userId` + `alert_id`） | なし |
+| `push_tokens` | プッシュ通知の宛先（キー：`userId` + `token`） | `ttl`（60日。アプリが起動のたびに延ばす） |
 
 - テーブルの取得は `services/cache.py` にまとめている。新しいテーブルもここに足す
 - キャッシュの中身の形を変えたら、キャッシュキーの版を上げる（`xxx` → `xxx_v2`）
@@ -174,6 +184,11 @@ models/       データの型（Stock など）
 | 依存ライブラリ | `requirements.txt` **と** `requirements-lambda.txt` |
 | OpenAI のモデル | `config/ai_models.py`（考えるモデル⇔GPT-4o系を変えるときは `services/openai_params.py` の判定も確認）⇔ 料金・速さが変わるので `OPENAI_TIMEOUT_SEC` と `OPENAI_REASONING_TOKEN_BUDGET` を見直す |
 | Flutter のバージョン | `.github/workflows/ci.yml` ⇔ `.github/workflows/preview.yml` ⇔ E2E の `e2e.yml`（`stock-app-e2e`） |
+| 株価アラートの条件・繰り返しの値 | `backend/config/price_alerts.py` の `CONDITIONS` / `REPEATS` ⇔ `lib/models/price_alert.dart` の `PriceAlertCondition` / `PriceAlertRepeat` |
+| 1人あたりのアラートの上限 | `config/price_alerts.py` の `MAX_ALERTS_PER_USER` ⇔ `PriceAlertService.maxAlerts` ⇔ お知らせ v8 の文面 |
+| 通知の `data`（`type`・`code`・`name`） | `services/price_alerts.run_price_alert_check()` ⇔ `PushService._openFromNotification()`（タップで開く画面） |
+| Lambda の入口（`lambda_handler.handler`） | EventBridge Scheduler の入力（`{"task": "price_alert_check"}`）。HTTP 以外のイベントは Mangum に渡すとエラーになる |
+| Firebase のパッケージの版 | iOS の最低バージョン（`ios/Runner.xcodeproj` の `IPHONEOS_DEPLOYMENT_TARGET`。firebase_core 4.x は 15.0 以上） |
 | `ci.yml` のジョブ名 | GitHub のルールセット「main を守る」の必須チェック（名前が合わないと全PRがマージ不可） |
 
 新しく連動する箇所ができたら、この表に追記する。
@@ -184,6 +199,7 @@ models/       データの型（Stock など）
 
 - 書き込めるのは `/tmp` だけ（`Dockerfile` で `HOME` とキャッシュ先を `/tmp` にしている）
 - タイムゾーンは UTC（→ `services/clock.py`）
+- 同じ関数が HTTP（Function URL）と EventBridge Scheduler（株価アラートの判定）の両方を受ける。`lambda_handler.handler` が `task` で振り分ける
 - 最大15分で強制終了（→ `config/timeouts.py`）
 - モジュール変数（`stocks_master` など）はコンテナが生きている間だけ残る。毎回あるとは限らない前提で書く
 - 起動時の処理（`main.py` の startup）はコールドスタートのたびに走る。重い処理を足さない
