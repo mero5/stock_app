@@ -118,13 +118,7 @@ class HomeViewModel extends ChangeNotifier {
       // DynamoDBから銘柄コードの一覧を取得
       final codes = await WatchlistService.getCodes();
 
-      // 各コードの銘柄情報を並行取得
-      // （直列だと銘柄数分の時間がかかるため並行処理）
-      final stocks = await Future.wait(
-        codes.map((code) => StockService.getStockInfo(code)),
-      );
-
-      watchList = stocks;
+      watchList = await _fetchStocks(codes);
     } catch (e) {
       debugPrint('ウォッチリスト取得エラー: $e');
       // 認証切れが原因ならログイン画面へ戻す
@@ -134,6 +128,31 @@ class HomeViewModel extends ChangeNotifier {
       isLoading = false;
       notifyListeners();
     }
+  }
+
+  /// 1件ずつ取得に切り替えたとき、同時に問い合わせる銘柄数
+  ///
+  /// 以前は全銘柄を一度に問い合わせていて、バックエンド（Lambda）の
+  /// 同時実行数の上限を超えた分が断られていた。
+  static const int _fallbackConcurrency = 3;
+
+  /// 銘柄名と株価を取得する
+  ///
+  /// まず /stock/quotes で全銘柄を1回の通信で取る。
+  /// 失敗した・バックエンドが古くてこのAPIが無いときは、
+  /// 1件ずつの取得（getStockInfo）に切り替え、[_fallbackConcurrency] 件ずつ問い合わせる。
+  Future<List<Stock>> _fetchStocks(List<String> codes) async {
+    try {
+      return await StockService.getWatchlistQuotes(codes);
+    } catch (e) {
+      debugPrint('ウォッチリストのまとめ取得に失敗（1件ずつ取得に切り替え）: $e');
+    }
+    final stocks = <Stock>[];
+    for (var i = 0; i < codes.length; i += _fallbackConcurrency) {
+      final chunk = codes.skip(i).take(_fallbackConcurrency);
+      stocks.addAll(await Future.wait(chunk.map(StockService.getStockInfo)));
+    }
+    return stocks;
   }
 
   // ============================================================
