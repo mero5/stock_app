@@ -167,6 +167,26 @@ class AuthService {
   }
 
   // ============================================================
+  // アクセストークン取得
+  // ============================================================
+
+  /// Cognito のアクセストークン（バックエンドに送るログインの証明）を取得する
+  ///
+  /// Amplify がトークンを保持していて、期限が切れていれば自動で更新する。
+  /// 返り値：トークン文字列。未ログイン・期限切れ・エラーの場合は null
+  static Future<String?> getAccessToken() async {
+    try {
+      final session = await Amplify.Auth.fetchAuthSession();
+      if (!session.isSignedIn) return null;
+      final cognitoSession = session as CognitoAuthSession;
+      return cognitoSession.userPoolTokensResult.value.accessToken.raw;
+    } catch (e) {
+      debugPrint('getAccessToken エラー: $e');
+      return null;
+    }
+  }
+
+  // ============================================================
   // ユーザーID取得
   // ============================================================
 

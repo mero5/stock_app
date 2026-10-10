@@ -20,10 +20,13 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../config/constants.dart';
 import '../models/stock.dart';
+import '../config/timeouts.dart';
+import 'api_client.dart';
 
 class StockService {
   /// AI系APIのタイムアウト（GPT-4oの応答が遅いので長めに取る）
-  static const Duration aiTimeout = Duration(seconds: 120);
+  /// （値は lib/config/timeouts.dart の AppTimeouts.ai。ここは既存の呼び出し元のための別名）
+  static const Duration aiTimeout = AppTimeouts.ai;
 
   // ============================================================
   // 共通ヘルパー
@@ -93,11 +96,11 @@ class StockService {
   /// [code] 銘柄コード（例：7203、AAPL）
   static Future<String> getName(String code) async {
     try {
-      final res = await http.get(
+      final res = await ApiClient.get(
         Uri.parse(
           '${Constants.backendUrl}/stock/name?code=${Uri.encodeComponent(code)}',
         ),
-      );
+      ).timeout(AppTimeouts.api);
       final data = jsonDecode(res.body);
       return data['name']?.toString() ?? code;
     } catch (_) {
@@ -114,11 +117,11 @@ class StockService {
   /// [code] 銘柄コード
   static Future<Map<String, dynamic>> getPrice(String code) async {
     try {
-      final res = await http.get(
+      final res = await ApiClient.get(
         Uri.parse(
           '${Constants.backendUrl}/stock/price?code=${Uri.encodeComponent(code)}',
         ),
-      );
+      ).timeout(AppTimeouts.api);
       return jsonDecode(res.body);
     } catch (_) {
       return {};
@@ -132,11 +135,11 @@ class StockService {
   ///
   /// [code] 銘柄コード
   static Future<Map<String, dynamic>> getDetail(String code) async {
-    final res = await http.get(
+    final res = await ApiClient.get(
       Uri.parse(
         '${Constants.backendUrl}/stock/detail?code=${Uri.encodeComponent(code)}',
       ),
-    );
+    ).timeout(AppTimeouts.api);
     return jsonDecode(res.body);
   }
 
@@ -148,11 +151,11 @@ class StockService {
   ///
   /// [keyword] 検索キーワード（銘柄名・コード・英語シンボル）
   static Future<List<Map<String, String>>> search(String keyword) async {
-    final res = await http.get(
+    final res = await ApiClient.get(
       Uri.parse(
         '${Constants.backendUrl}/search?q=${Uri.encodeComponent(keyword)}',
       ),
-    );
+    ).timeout(AppTimeouts.api);
     final List data = jsonDecode(res.body);
     return data
         .map<Map<String, String>>(
@@ -225,11 +228,11 @@ class StockService {
     try {
       // カンマ区切りのコード文字列に変換してクエリパラメータで送信
       final codesParam = codes.join(',');
-      final res = await http.get(
+      final res = await ApiClient.get(
         Uri.parse(
           '${Constants.backendUrl}/stock/events?codes=${Uri.encodeComponent(codesParam)}',
         ),
-      );
+      ).timeout(AppTimeouts.api);
       final List data = jsonDecode(res.body);
       return List<Map<String, dynamic>>.from(data);
     } catch (e) {
@@ -253,7 +256,7 @@ class StockService {
   /// [code] 銘柄コード
   static Future<Map<String, dynamic>> getAiAnalysis(String code) async {
     try {
-      final res = await http
+      final res = await ApiClient
           .get(
             Uri.parse(
               '${Constants.backendUrl}/stock/ai_analysis'
@@ -291,7 +294,7 @@ class StockService {
     dynamic low52,
   }) async {
     try {
-      final res = await http.post(
+      final res = await ApiClient.post(
         Uri.parse('${Constants.backendUrl}/stock/consult'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
@@ -356,7 +359,7 @@ class StockService {
         : 'priority_long';
 
     try {
-      final res = await http
+      final res = await ApiClient
           .post(
             Uri.parse('${Constants.backendUrl}/stock/swing_analysis'),
             headers: {'Content-Type': 'application/json'},
@@ -427,11 +430,11 @@ class StockService {
     int month,
   ) async {
     try {
-      final res = await http.get(
+      final res = await ApiClient.get(
         Uri.parse(
           '${Constants.backendUrl}/market/events?year=$year&month=$month',
         ),
-      );
+      ).timeout(AppTimeouts.api);
       final List data = jsonDecode(res.body);
       return List<Map<String, dynamic>>.from(data);
     } catch (e) {
@@ -453,7 +456,7 @@ class StockService {
     String userId = '',
   }) async {
     try {
-      final res = await http
+      final res = await ApiClient
           .get(
             Uri.parse(
               '${Constants.backendUrl}/stats/accuracy'
@@ -476,12 +479,12 @@ class StockService {
     String code = '',
   }) async {
     try {
-      final res = await http.get(
+      final res = await ApiClient.get(
         Uri.parse(
           '${Constants.backendUrl}/stats/predictions'
           '?limit=$limit&code=${Uri.encodeComponent(code)}',
         ),
-      );
+      ).timeout(AppTimeouts.api);
       final data = jsonDecode(res.body);
       return List<Map<String, dynamic>>.from(data['predictions'] ?? []);
     } catch (e) {
@@ -501,9 +504,9 @@ class StockService {
     int months = 6,
   }) async {
     try {
-      final res = await http.get(
+      final res = await ApiClient.get(
         Uri.parse('${Constants.backendUrl}/market/upcoming?months=$months'),
-      );
+      ).timeout(AppTimeouts.api);
       final List data = jsonDecode(res.body);
       return List<Map<String, dynamic>>.from(data);
     } catch (e) {
@@ -523,11 +526,11 @@ class StockService {
     int month,
   ) async {
     try {
-      final res = await http.get(
+      final res = await ApiClient.get(
         Uri.parse(
           '${Constants.backendUrl}/nikkei/monthly?year=$year&month=$month',
         ),
-      );
+      ).timeout(AppTimeouts.api);
       return jsonDecode(res.body) as Map<String, dynamic>;
     } catch (e) {
       debugPrint('日経平均取得エラー: $e');
@@ -545,9 +548,9 @@ class StockService {
     String period = '5d',
   }) async {
     try {
-      final res = await http.get(
+      final res = await ApiClient.get(
         Uri.parse('${Constants.backendUrl}/market/sectors?period=$period'),
-      );
+      ).timeout(AppTimeouts.api);
       return jsonDecode(res.body) as Map<String, dynamic>;
     } catch (e) {
       // エラー時は空のセクターデータを返す
@@ -563,11 +566,11 @@ class StockService {
   /// [sectors] getSectorTrendsで取得したセクターデータ
   static Future<String> getSectorComment(Map<String, dynamic> sectors) async {
     try {
-      final res = await http.post(
+      final res = await ApiClient.post(
         Uri.parse('${Constants.backendUrl}/market/sector_comment'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode(sectors),
-      );
+      ).timeout(AppTimeouts.ai);
       final data = jsonDecode(res.body);
       return data['comment'] ?? '';
     } catch (e) {
@@ -587,11 +590,11 @@ class StockService {
   /// [query] 検索キーワード
   static Future<List<Map<String, String>>> searchChannels(String query) async {
     try {
-      final res = await http.get(
+      final res = await ApiClient.get(
         Uri.parse(
           '${Constants.backendUrl}/channels/search?q=${Uri.encodeComponent(query)}',
         ),
-      );
+      ).timeout(AppTimeouts.api);
       final List data = jsonDecode(res.body);
       return data
           .map<Map<String, String>>(
@@ -617,11 +620,11 @@ class StockService {
   /// [transcript] 動画の字幕テキスト
   static Future<String> summarize(String title, String transcript) async {
     try {
-      final res = await http.post(
+      final res = await ApiClient.post(
         Uri.parse('${Constants.backendUrl}/summarize'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({'title': title, 'transcript': transcript}),
-      );
+      ).timeout(AppTimeouts.ai);
       final data = jsonDecode(res.body);
       return data['summary'] ?? '要約できませんでした';
     } catch (e) {
@@ -641,11 +644,11 @@ class StockService {
     int maxResults = 10,
   }) async {
     try {
-      final res = await http.get(
+      final res = await ApiClient.get(
         Uri.parse(
           '${Constants.backendUrl}/channels/$channelId/videos?max_results=$maxResults',
         ),
-      );
+      ).timeout(AppTimeouts.api);
       final data = jsonDecode(res.body);
       return List<Map<String, dynamic>>.from(data['videos'] ?? []);
     } catch (e) {

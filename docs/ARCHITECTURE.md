@@ -90,10 +90,12 @@ config/          設定値・定数（タイムアウト、お知らせ、日程
 | OpenAI の出力上限・考える量 | `services/openai_params.py` の `openai_limit_params()` | 考えるモデル（GPT-5/6系）に `max_tokens` を送ると400エラー。思考の分を足さないと答えが空になる |
 | AI予測の記録・答え合わせ | `services/predictions.py` | 的中率の集計がずれる |
 | お知らせ | `config/notices.py` の `NOTICES`（version を +1） | — |
+| ログインのトークン確認 | `services/auth.py` の `verify_request_token()`（`main.py` のミドルウェアで全リクエストに実行し、結果は `request.state.auth`）。設定は `config/auth.py` | 自分で JWT を読むと、署名・期限・発行元・client_id の確認漏れが起きる |
 | （アプリ）エラーの表示 | `lib/widgets/error_dialog.dart` / `api_error_banner.dart` | 失敗しても何も出ない画面になる |
 | （アプリ）ログイン状態の確認 | `AuthService.hasValidSession()` / `lib/services/session_guard.dart` | `isSignedIn` は期限切れでも true のまま |
 | （アプリ）表示用の整形 | `lib/utils/formatter.dart` | 数字・日付の表示がばらつく |
-| （アプリ）AI系APIの待ち時間 | `StockService.aiTimeout` | バックエンドのタイムアウトとの整合が取れなくなる |
+| （アプリ）バックエンド・Lambda への通信 | `lib/services/api_client.dart` の `ApiClient.get` / `ApiClient.post`（`http.get` / `http.post` を直接呼ばない） | ログインのトークン（Authorization ヘッダー）が付かず、バックエンドで本人確認できない（段階2以降は拒否される） |
+| （アプリ）通信の待ち時間 | `lib/config/timeouts.dart` の `AppTimeouts.api`（40秒）／`AppTimeouts.ai`（120秒）。`StockService.aiTimeout` は `AppTimeouts.ai` の別名 | 付けないと、サーバーが応答しないときに読み込み中のまま止まる（最悪 Lambda の15分）。バックエンドのタイムアウトより長くしないと、バックエンドのエラーを受け取れない |
 
 ---
 

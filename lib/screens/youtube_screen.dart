@@ -1,11 +1,12 @@
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
 import 'dart:convert';
 import '../config/constants.dart';
 import '../services/auth_service.dart';
 import '../services/channel_service.dart';
 import 'youtube_detail_screen.dart';
 import 'youtube_video_list_screen.dart';
+import '../config/timeouts.dart';
+import '../services/api_client.dart';
 
 class YoutubeScreen extends StatefulWidget {
   const YoutubeScreen({super.key});
@@ -73,11 +74,11 @@ class _YoutubeScreenState extends State<YoutubeScreen>
     }
     setState(() => isSearching = true);
     try {
-      final res = await http.get(
+      final res = await ApiClient.get(
         Uri.parse(
           "${Constants.backendUrl}/channels/search?q=${Uri.encodeComponent(query)}",
         ),
-      );
+      ).timeout(AppTimeouts.api);
       final List data = jsonDecode(res.body);
       setState(() {
         searchResults = data
@@ -142,11 +143,11 @@ class _YoutubeScreenState extends State<YoutubeScreen>
   // 字幕取得→要約（変更なし）
   Future<Map<String, dynamic>> getSummary(Map<String, String> channel) async {
     try {
-      final res = await http.get(
+      final res = await ApiClient.get(
         Uri.parse(
           "${Constants.backendUrl}/channels/${channel["channel_id"]}/latest_video",
         ),
-      );
+      ).timeout(AppTimeouts.api);
       final videoData = jsonDecode(res.body);
 
       if (videoData["error"] != null) {
@@ -172,7 +173,7 @@ class _YoutubeScreenState extends State<YoutubeScreen>
       final publishedAt = videoData["published_at"] ?? "";
       final videoUrl = "https://www.youtube.com/watch?v=$videoId";
 
-      final summaryRes = await http.post(
+      final summaryRes = await ApiClient.post(
         Uri.parse("${Constants.backendUrl}/summarize"),
         headers: {"Content-Type": "application/json"},
         body: jsonEncode({
@@ -180,7 +181,7 @@ class _YoutubeScreenState extends State<YoutubeScreen>
           "url": videoUrl,
           "transcript": description,
         }),
-      );
+      ).timeout(AppTimeouts.ai);
       final summaryData = jsonDecode(summaryRes.body);
 
       // バックエンドから返ってきたJSONをそのまま使い、channel_nameとtitle

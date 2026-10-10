@@ -14,6 +14,9 @@ import math
 from fastapi.responses import JSONResponse
 import json
 from config.timeouts import JQUANTS_TIMEOUT, OPENAI_TIMEOUT_SEC, OPENAI_MAX_RETRIES
+from fastapi import Request
+from starlette.concurrency import run_in_threadpool
+from services.auth import verify_request_token
 
 # ===================================================
 # APIキー設定
@@ -66,6 +69,31 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# ===================================================
+# ログインのトークン確認（段階1：確かめてログに出すだけ）
+#
+# Authorization ヘッダーの Cognito アクセストークンを確かめ、結果を
+# request.state.auth に入れて、1リクエスト1行のログ（"[auth] ..."）を出す。
+# まだ拒否はしない（古いアプリはトークンを送らないため）。詳しくは config/auth.py
+# ===================================================
+@app.middleware("http")
+async def check_auth_token(request: Request, call_next):
+    if request.method == "OPTIONS":  # CORS の事前確認は対象外
+        return await call_next(request)
+    # 初回だけ Cognito の公開鍵を取りに行く（通信）ので、別スレッドで確かめる
+    result = await run_in_threadpool(verify_request_token, request.headers.get("authorization"))
+    request.state.auth = result
+    query_user_id = request.query_params.get("userId")
+    mismatch = bool(result.user_id and query_user_id and query_user_id != result.user_id)
+    # トークン自体はログに出さない
+    print(
+        f"[auth] {result.status} {request.method} {request.url.path}"
+        + (f" reason={result.reason}" if result.reason else "")
+        + (" userId不一致" if mismatch else "")
+    )
+    return await call_next(request)
 
 # 銘柄マスタ（起動時にJ-Quantsから取得してメモリに保持）
 stocks_master = []

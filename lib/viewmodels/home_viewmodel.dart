@@ -13,12 +13,12 @@
 
 import 'package:flutter/material.dart';
 import 'dart:convert';
-import 'package:http/http.dart' as http;
 import '../models/stock.dart';
 import '../services/stock_service.dart';
 import '../services/watchlist_service.dart';
 import '../services/session_guard.dart';
 import '../config/constants.dart';
+import '../services/api_client.dart';
 
 class HomeViewModel extends ChangeNotifier {
   // ============================================================
@@ -69,7 +69,7 @@ class HomeViewModel extends ChangeNotifier {
   /// 画面上部にエラーバナーを表示する
   Future<void> checkApiHealth() async {
     try {
-      final res = await http
+      final res = await ApiClient
           .get(Uri.parse('${Constants.backendUrl}/health'))
           .timeout(const Duration(seconds: 10)); // 10秒でタイムアウト
 

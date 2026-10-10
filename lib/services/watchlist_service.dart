@@ -18,6 +18,8 @@ import 'package:amplify_flutter/amplify_flutter.dart';
 import 'package:http/http.dart' as http;
 import '../config/constants.dart';
 import '../utils/stock_code.dart';
+import '../config/timeouts.dart';
+import 'api_client.dart';
 
 class WatchlistService {
   // ============================================================
@@ -61,11 +63,11 @@ class WatchlistService {
     final normalized = stocks.map(_normalize).toList();
 
     // LambdaにPOSTして保存
-    final response = await http.post(
+    final response = await ApiClient.post(
       Uri.parse(Constants.saveUrl),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({'userId': user.userId, 'stocks': normalized}),
-    );
+    ).timeout(AppTimeouts.api);
     _checkResponse(response, '保存');
   }
 
@@ -87,11 +89,11 @@ class WatchlistService {
     final normalized = _normalize(stock);
 
     // LambdaにPOSTして削除
-    final response = await http.post(
+    final response = await ApiClient.post(
       Uri.parse(Constants.deleteUrl),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({'userId': user.userId, 'stock': normalized}),
-    );
+    ).timeout(AppTimeouts.api);
 
     // デバッグ用：削除結果をログに出力
     // debugPrintはリリースビルドでは出力されない
@@ -114,9 +116,9 @@ class WatchlistService {
     final user = await Amplify.Auth.getCurrentUser();
 
     // LambdaにGETリクエストを送信
-    final response = await http.get(
+    final response = await ApiClient.get(
       Uri.parse('${Constants.getUrl}?userId=${user.userId}'),
-    );
+    ).timeout(AppTimeouts.api);
 
     // レスポンスをパースして銘柄コードのリストに変換
     final data = jsonDecode(response.body);

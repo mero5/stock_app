@@ -13,10 +13,10 @@
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
-import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../config/constants.dart';
+import 'api_client.dart';
 
 /// 告知1件
 class Notice {
@@ -136,7 +136,7 @@ class NoticeService {
 
   static Future<List<Notice>> _fetch({required int since}) async {
     try {
-      final res = await http
+      final res = await ApiClient
           .get(Uri.parse('${Constants.backendUrl}/notices?since=$since'))
           .timeout(const Duration(seconds: 10));
       if (res.statusCode != 200) {
@@ -164,7 +164,7 @@ class NoticeService {
   /// 初回プロフィール設定の完了時に呼ぶ。
   static Future<void> markAllAsRead() async {
     try {
-      final res = await http
+      final res = await ApiClient
           .get(Uri.parse('${Constants.backendUrl}/notices?since=0'))
           .timeout(const Duration(seconds: 10));
       if (res.statusCode != 200) return;
