@@ -23,7 +23,10 @@ async def get_user_profile(userId: str):
         data.setdefault("period_medium_max_days", DEFAULT_PERIOD_DAYS["medium_max"])
         return {"exists": True, **data}
     except Exception as e:
-        return {"error": str(e), "exists": False}
+        # 失敗を "exists": False（＝未登録）にしない。アプリが登録済みのユーザーを
+        # 初回設定に進め、既定値で上書き保存させてしまうため（課題 K-36）
+        print(f"プロファイル取得エラー: {e}")
+        return {"error": str(e)}
 
 
 @router.post("/user/profile")

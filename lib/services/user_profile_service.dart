@@ -22,35 +22,100 @@ import '../config/constants.dart';
 import '../config/timeouts.dart';
 import 'api_client.dart';
 
+/// プロファイル取得の結果の種類
+enum ProfileFetchStatus {
+  /// 登録あり
+  found,
+
+  /// 未登録（新規ユーザー）
+  notFound,
+
+  /// 通信エラー・バックエンドのエラー（登録されているかは分からない）
+  error,
+}
+
+/// プロファイル取得の結果。「未登録」と「エラー」を区別するためのもの
+class ProfileFetchResult {
+  final ProfileFetchStatus status;
+
+  /// [status] が found のときだけ入る
+  final Map<String, dynamic>? profile;
+
+  /// [status] が error のときの技術的な詳細（ErrorDialog の detail 用）
+  final String? errorDetail;
+
+  const ProfileFetchResult._(this.status, {this.profile, this.errorDetail});
+
+  const ProfileFetchResult.error(String detail)
+      : this._(ProfileFetchStatus.error, errorDetail: detail);
+
+  /// `/user/profile` の応答を結果に変換する
+  ///
+  /// `"exists": false` のときだけ「未登録」にする。
+  /// 200 以外・JSON でない・`error` がある・`exists` が無い（Lambda に断られた応答など）は
+  /// すべて「エラー」にする。
+  factory ProfileFetchResult.fromResponse(int statusCode, String body) {
+    if (statusCode != 200) {
+      return ProfileFetchResult.error('HTTP $statusCode: $body');
+    }
+    final Object? decoded;
+    try {
+      decoded = jsonDecode(body);
+    } catch (e) {
+      return ProfileFetchResult.error('JSONではない応答: $body');
+    }
+    if (decoded is! Map<String, dynamic>) {
+      return ProfileFetchResult.error('想定外の応答: $body');
+    }
+    if (decoded['error'] != null) {
+      return ProfileFetchResult.error(decoded['error'].toString());
+    }
+    if (decoded['exists'] == false) {
+      return const ProfileFetchResult._(ProfileFetchStatus.notFound);
+    }
+    if (decoded['exists'] == true) {
+      return ProfileFetchResult._(ProfileFetchStatus.found, profile: decoded);
+    }
+    return ProfileFetchResult.error('exists が無い応答: $body');
+  }
+}
+
 class UserProfileService {
   // ============================================================
   // 取得
   // ============================================================
 
-  /// ユーザープロファイルをバックエンドから取得する
+  /// ユーザープロファイルを取得し、「登録あり・未登録・エラー」を区別して返す
   ///
-  /// プロファイルが存在しない場合（新規ユーザー）はnullを返す。
-  /// 通信エラーの場合もnullを返す（エラーは握り潰す）。
+  /// 「初回設定に進むか」「既存の値を読み込んでから編集させるか」を決めるときは、
+  /// [getProfile] ではなくこちらを使う。[getProfile] はエラーも null（＝未登録）にするため、
+  /// 登録済みのユーザーを初回設定に進め、既定値で上書き保存させてしまう（課題 K-36）。
   ///
   /// [userId] Cognito のユーザーID
-  /// 返り値：プロファイルのMap、未登録またはエラーの場合はnull
-  static Future<Map<String, dynamic>?> getProfile(String userId) async {
+  static Future<ProfileFetchResult> fetchProfile(String userId) async {
     try {
       final res = await ApiClient.get(
         Uri.parse('${Constants.backendUrl}/user/profile?userId=$userId'),
       ).timeout(AppTimeouts.api);
-
-      final data = jsonDecode(res.body) as Map<String, dynamic>;
-
-      // 'exists: false' はプロファイル未登録を意味する
-      if (data['exists'] == false) return null;
-
-      return data;
+      return ProfileFetchResult.fromResponse(res.statusCode, res.body);
     } catch (e) {
-      // 通信エラー等はnullを返してUI側でデフォルト値を使う
       debugPrint('プロファイル取得エラー: $e');
-      return null;
+      return ProfileFetchResult.error(e.toString());
     }
+  }
+
+  /// ユーザープロファイルをバックエンドから取得する（表示用）
+  ///
+  /// プロファイルが存在しない場合（新規ユーザー）はnullを返す。
+  /// 通信エラーの場合もnullを返す（エラーは握り潰す）。
+  /// 画面の行き先や保存の判断には使わず、[fetchProfile] を使うこと。
+  ///
+  /// [userId] Cognito のユーザーID
+  /// 返り値：プロファイルのMap、未登録またはエラーの場合はnull
+  static Future<Map<String, dynamic>?> getProfile(String userId) async {
+    // 未登録・エラーは null を返してUI側でデフォルト値を使う
+    final result = await fetchProfile(userId);
+    return result.profile;
   }
 
   // ============================================================

@@ -21,6 +21,7 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../services/auth_service.dart';
 import '../services/user_profile_service.dart';
+import '../widgets/error_dialog.dart';
 import 'home_screen.dart';
 import 'profile_setup_screen.dart';
 
@@ -87,19 +88,31 @@ class _TermsScreenState extends State<TermsScreen> {
 
     // プロファイルの有無で遷移先を決める
     final userId = await AuthService.getUserId();
-    final profile = userId == null
-        ? null
-        : await UserProfileService.getProfile(userId);
+    final result =
+        userId == null ? null : await UserProfileService.fetchProfile(userId);
     if (!mounted) return;
 
+    // 登録されているか分からないまま初回設定に進むと、既存のプロファイルを
+    // 既定値で上書きしうる（課題 K-36）。この画面にとどまり、もう一度押してもらう
+    if (result?.status == ProfileFetchStatus.error) {
+      setState(() => _isLoading = false);
+      await ErrorDialog.show(
+        context,
+        message: '通信に失敗しました。時間をおいて、もう一度「同意してアプリを始める」を押してください。',
+        detail: result!.errorDetail,
+      );
+      return;
+    }
+
     // 戻れないようにpushReplacementを使う
-    // userIdが取れない場合（通信エラー等）は従来どおりHomeScreenへ
+    // userIdが取れない場合は従来どおりHomeScreenへ
     Navigator.pushReplacement(
       context,
       MaterialPageRoute(
-        builder: (_) => (userId != null && profile == null)
-            ? ProfileSetupScreen(userId: userId)
-            : const HomeScreen(),
+        builder: (_) =>
+            (userId != null && result!.status == ProfileFetchStatus.notFound)
+                ? ProfileSetupScreen(userId: userId)
+                : const HomeScreen(),
       ),
     );
   }

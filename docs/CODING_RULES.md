@@ -127,6 +127,7 @@ stock_app のコードの書き方の決まり。**コードを変える前に�
 
 - **失敗したら必ずユーザーに見せる。** `widgets/error_dialog.dart`（`ErrorDialog.show`）か `widgets/api_error_banner.dart` を使う。「失敗したのに画面に何も出ない」を作らない
 - バックエンドの成否は**ステータスコードではなく `error` キーの有無**で判定する
+- **「データが無い」と「取得に失敗した」を同じ値（null・`"exists": false` など）で返さない。** その結果で画面の行き先や保存の内容を決めるときは特に。失敗を「無い」と扱うと、既存のデータを既定値で上書きしてしまう（K-36。`UserProfileService.fetchProfile()` が例）
 - ログイン状態の判定は `isSignedIn` ではなく `AuthService.hasValidSession()` を使う
 - `showDialog` を続けて出すときは `await` し、1件ごとに `context.mounted` を確認する
 
