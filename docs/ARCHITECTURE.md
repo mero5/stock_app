@@ -84,6 +84,7 @@ config/          設定値・定数（タイムアウト、お知らせ、日程
 | 日本株かどうかの判定・銘柄コードの変換 | `services/stock_code.py` の `is_jp_code()` / `to_yf_ticker()` / `to_jquants_code()`（アプリは `lib/utils/stock_code.dart` の `StockCode`） | `isdigit()` や `^\d{5}$` で判定すると、英字入りのコード（285A など）を米国株として扱ってしまう |
 | yfinance の結果の後始末 | `services/market_data.py` の `drop_empty_rows()` | 日本株は最新日が空の行で返り、株価・指標が全部 null になる |
 | DynamoDB のキャッシュ | `services/cache.py` の `cache_get()` / `cache_set()` | 期限切れの判定・Decimal 変換を毎回書くことになる |
+| 銘柄マスタ（全上場銘柄の名前一覧）の用意 | `services/stocks_master.py` の `prepare_stocks_master()`（DynamoDB に1日保存したものを先に読み、無いときだけ J-Quants から取る。ページ送りも読む） | 起動のたびに J-Quants へ取りに行くと、同時に何台も起動したときに一部の台で失敗し、銘柄名がコードのまま・`/health` が J-Quants エラーになる |
 | AI系のエラーレスポンス | `routers/ai.py` の `classify_error()` / `error_response()` | アプリがエラーを結果として扱ってしまう |
 | OpenAI で JSON を受け取る | `routers/ai.py` の `call_openai_json()` | 途中で切れた JSON（`max_tokens` 切れ）を検出できない |
 | OpenAI のモデル名 | `config/ai_models.py` の `OPENAI_ANALYSIS_MODEL`（分析）/ `OPENAI_LIGHT_MODEL`（翻訳・相談）と考える量 `OPENAI_ANALYSIS_EFFORT` / `OPENAI_LIGHT_EFFORT` | 直書きすると、変えるときに漏れる |
@@ -179,3 +180,4 @@ models/       データの型（Stock など）
 - 最大15分で強制終了（→ `config/timeouts.py`）
 - モジュール変数（`stocks_master` など）はコンテナが生きている間だけ残る。毎回あるとは限らない前提で書く
 - 起動時の処理（`main.py` の startup）はコールドスタートのたびに走る。重い処理を足さない
+- アプリが同時に何件も問い合わせると、Lambda が何台も同時に起動する。起動時に外部APIへ取りに行くものは DynamoDB に保存して共有する（例：銘柄マスタ）。また、アカウントの同時実行数の上限を超えた分は `ConcurrentInvocationLimitExceeded` で断られる
