@@ -224,7 +224,8 @@ class StockService {
 
   /// 銘柄名と株価データ（price・change・change_pct）を、画面表示用の Stock にする
   ///
-  /// [priceData] /stock/price または /stock/quotes の1件。取れなかった項目は null
+  /// [priceData] /stock/price または /stock/quotes の1件。取れなかった項目は null。
+  ///             /stock/quotes なら銘柄の画像の URL（logo_url）も入っている
   @visibleForTesting
   static Stock stockFromQuote(
     String code,
@@ -253,6 +254,7 @@ class StockService {
           : '${cp.toStringAsFixed(2)}%';
     }
 
+    final logo = priceData['logo_url'];
     return Stock(
       code: code,
       name: name,
@@ -260,6 +262,7 @@ class StockService {
       change: change,
       changePct: changePct,
       isPositive: isPositive,
+      logoUrl: logo is String && logo.isNotEmpty ? logo : null,
     );
   }
 
