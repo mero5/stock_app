@@ -64,3 +64,29 @@ def test_retry_is_throttled(monkeypatch):
     clock["now"] += stock.STOCKS_MASTER_RETRY_SEC
     stock.ensure_stocks_master()
     assert calls == [1, 1]
+
+
+def test_name_falls_back_to_yfinance_when_not_in_master(monkeypatch):
+    # 銘柄マスタが取れていない・新規上場で載っていないときは、コードではなく yfinance の名前を返す
+    monkeypatch.setattr(stock, "stocks_master", [])
+    monkeypatch.setattr(stock, "ensure_stocks_master", lambda: None)
+
+    class FakeTicker:
+        def __init__(self, symbol):
+            assert symbol == "7203.T"
+            self.info = {"longName": "Toyota Motor Corporation"}
+
+    monkeypatch.setattr(stock.yf, "Ticker", FakeTicker)
+    assert stock.get_stock_name("72030") == {"code": "72030", "name": "Toyota Motor Corporation"}
+
+
+def test_name_returns_code_when_yfinance_also_fails(monkeypatch):
+    monkeypatch.setattr(stock, "stocks_master", [])
+    monkeypatch.setattr(stock, "ensure_stocks_master", lambda: None)
+
+    class Broken:
+        def __init__(self, symbol):
+            raise RuntimeError("yfinance error")
+
+    monkeypatch.setattr(stock.yf, "Ticker", Broken)
+    assert stock.get_stock_name("72030") == {"code": "72030", "name": "72030"}

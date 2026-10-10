@@ -127,7 +127,7 @@ app.include_router(notices_router.router)
 # ===================================================
 # 起動時処理
 # ===================================================
-def fetch_stocks_master() -> bool:
+def fetch_stocks_master(allow_fetch: bool = True) -> bool:
     """
     全上場銘柄マスタを用意して stocks_master に入れる。成功したら True
 
@@ -137,7 +137,7 @@ def fetch_stocks_master() -> bool:
     まず DynamoDB に1日保存したものを読み、無いときだけ J-Quants に取りに行く
     （services/stocks_master.py。起動のたびに J-Quants へ同時アクセスして失敗していたため）。
     """
-    loaded, source = prepare_stocks_master(JQUANTS_API_KEY)
+    loaded, source = prepare_stocks_master(JQUANTS_API_KEY, allow_fetch=allow_fetch)
     if not loaded:
         return False
     # routers/stock.py と同じリストを共有しているので、作り直さずに中身を入れ替える
@@ -151,8 +151,14 @@ stock_router.reload_stocks_master = fetch_stocks_master
 
 @app.on_event("startup")
 async def load_stocks_master():
-    """起動時に銘柄マスタを取得してメモリに保持"""
-    fetch_stocks_master()
+    """
+    起動時は DynamoDB に保存した銘柄マスタを読むだけにする（J-Quants は呼ばない）
+
+    Lambda の起動は約10秒で打ち切られる。起動中に J-Quants を待って時間切れになり、
+    起動し直すたびにまた J-Quants を呼んで回数制限を使い切っていた（2026-10-10）。
+    保存が無いときは、検索・銘柄名・/health のリクエストの中で取りに行く（routers/stock.ensure_stocks_master）
+    """
+    fetch_stocks_master(allow_fetch=False)
 
 
 @app.get("/health")
