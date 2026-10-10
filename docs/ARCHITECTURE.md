@@ -156,7 +156,7 @@ models/       データの型（Stock など）
 |---|---|
 | AIの優先順位の既定値 | `services/technical.py` の `DEFAULT_PRIORITY` ⇔ `lib/screens/profile_setup_screen.dart` の既定値 |
 | プロンプト | `services/technical.py` の `PROMPT_VERSION` を上げる |
-| セクターETFの名前 | `routers/market.py` の `jp_sectors` / `us_sectors` ⇔ `services/technical.py` の `SECTOR_EN_TO_JP` / `SECTOR_EN_TO_US` / `INDUSTRY_KEYWORD_TO_JP` |
+| セクターETFの名前 | `routers/market.py` の `JP_SECTOR_ETFS` / `US_SECTOR_ETFS`（日本は JPX の ETF 一覧の「TOPIX-17 ○○」の名前）⇔ `services/technical.py` の `SECTOR_EN_TO_JP` / `SECTOR_EN_TO_US` / `INDUSTRY_KEYWORD_TO_JP` ⇔ `lib/screens/market_screen.dart` の説明文。名前を変えたら `/market/sectors` のキャッシュキーの版を上げる（`tests/test_sector_names.py` が対応表の名前の食い違いを検出する） |
 | イベントの type を追加 | `routers/market.py` ⇔ `lib/config/event_types.dart`（グループに入れないとフィルタに出ない） |
 | プロファイルの項目を追加 | `routers/user.py`（保存・既定値）⇔ `UserProfileService` ⇔ `ProfileSetupScreen` ⇔ `StockService.runSwingAnalysis`（送信）⇔ `routers/ai.py`（受信）⇔ `build_profile_section` |
 | バックエンドのURL | `lib/config/constants.dart`（＋アプリのビルド番号を上げてリリース） |
