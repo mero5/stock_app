@@ -66,6 +66,18 @@ class StockService {
     }
   }
 
+  /// HTTP 200 なら JSON を読んで返す。200 以外は例外を投げる
+  ///
+  /// スケジュール用の取得（イベント・日経平均）は、以前は失敗しても空のリストを返していて、
+  /// 画面には何も出ず「予定が無い」ように見えていた（K-54）。失敗は例外にして、画面でエラーを出す。
+  /// Lambda に断られたとき（同時実行数の上限）も 200 以外で返る。
+  static dynamic _decodeOk(http.Response res) {
+    if (res.statusCode != 200) {
+      throw Exception('HTTP ${res.statusCode}: ${res.body}');
+    }
+    return jsonDecode(res.body);
+  }
+
   /// 通信そのものが失敗したときのエラーMapを作る
   static Map<String, dynamic> _networkError(Object e) {
     if (e is TimeoutException) {
@@ -220,6 +232,7 @@ class StockService {
   /// 銘柄のイベント（決算・配当落ち日）を取得する
   ///
   /// スケジュール画面のウォッチリスト銘柄のイベント表示に使用。
+  /// 失敗したら例外を投げる（呼び出し側でエラーを出す）。
   ///
   /// [codes] 銘柄コードのリスト
   static Future<List<Map<String, dynamic>>> getStockEvents(
@@ -233,11 +246,10 @@ class StockService {
           '${Constants.backendUrl}/stock/events?codes=${Uri.encodeComponent(codesParam)}',
         ),
       ).timeout(AppTimeouts.api);
-      final List data = jsonDecode(res.body);
-      return List<Map<String, dynamic>>.from(data);
+      return List<Map<String, dynamic>>.from(_decodeOk(res) as List);
     } catch (e) {
       debugPrint('イベント取得エラー: $e');
-      return [];
+      rethrow;
     }
   }
 
@@ -435,11 +447,10 @@ class StockService {
           '${Constants.backendUrl}/market/events?year=$year&month=$month',
         ),
       ).timeout(AppTimeouts.api);
-      final List data = jsonDecode(res.body);
-      return List<Map<String, dynamic>>.from(data);
+      return List<Map<String, dynamic>>.from(_decodeOk(res) as List);
     } catch (e) {
       debugPrint('マーケットイベント取得エラー: $e');
-      return [];
+      rethrow;
     }
   }
 
@@ -507,11 +518,10 @@ class StockService {
       final res = await ApiClient.get(
         Uri.parse('${Constants.backendUrl}/market/upcoming?months=$months'),
       ).timeout(AppTimeouts.api);
-      final List data = jsonDecode(res.body);
-      return List<Map<String, dynamic>>.from(data);
+      return List<Map<String, dynamic>>.from(_decodeOk(res) as List);
     } catch (e) {
       debugPrint('直近イベント取得エラー: $e');
-      return [];
+      rethrow;
     }
   }
 
@@ -531,10 +541,10 @@ class StockService {
           '${Constants.backendUrl}/nikkei/monthly?year=$year&month=$month',
         ),
       ).timeout(AppTimeouts.api);
-      return jsonDecode(res.body) as Map<String, dynamic>;
+      return _decodeOk(res) as Map<String, dynamic>;
     } catch (e) {
       debugPrint('日経平均取得エラー: $e');
-      return {};
+      rethrow;
     }
   }
 
