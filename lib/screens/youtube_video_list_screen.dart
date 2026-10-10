@@ -15,10 +15,10 @@
 import 'package:flutter/material.dart';
 import '../services/stock_service.dart';
 import '../config/constants.dart';
-import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'youtube_detail_screen.dart';
 import '../config/timeouts.dart';
+import '../services/api_client.dart';
 
 class YoutubeVideoListScreen extends StatefulWidget {
   /// 表示するチャンネルの情報
@@ -102,7 +102,7 @@ class _YoutubeVideoListScreenState extends State<YoutubeVideoListScreen> {
 
       // バックエンドに要約リクエストを送信
       // titleとdescription（字幕の代わり）をAIに渡す
-      final res = await http.post(
+      final res = await ApiClient.post(
         Uri.parse('${Constants.backendUrl}/summarize'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({

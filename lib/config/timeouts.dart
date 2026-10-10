@@ -5,7 +5,7 @@
 // サーバーが応答するまでいつまでも待つ。バックエンド（Lambda）は
 // 最大15分で打ち切られるので、最悪15分「読み込み中」のまま止まる。
 // 通信には必ずどちらかを付けること：
-//   `await http.get(...).timeout(AppTimeouts.api)`
+//   `await ApiClient.get(...).timeout(AppTimeouts.api)`
 //
 // バックエンド側の値は backend/config/timeouts.py にある。
 // アプリ側はそれより長くして、バックエンドのエラーを先に受け取れるようにする。

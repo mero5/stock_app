@@ -14,6 +14,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:stock_app/models/stock.dart';
 import 'package:stock_app/utils/formatter.dart';
 import 'package:stock_app/utils/stock_code.dart';
+import 'package:stock_app/config/constants.dart';
+import 'package:stock_app/services/api_client.dart';
 
 void main() {
   group('Stock.displayCode', () {
@@ -88,6 +90,19 @@ void main() {
     test('時価総額は兆円・億円で表示', () {
       expect(Formatter.marketCap(2.5e13), '25.0兆円');
       expect(Formatter.marketCap(3.0e10), '300億円');
+    });
+  });
+
+  // ログインのトークンは、メインのバックエンド宛てにだけ付ける（K-06 段階1）。
+  // ウォッチリスト等の API Gateway に付けると、Web版で CORS により失敗しうるため。
+  group('ApiClient.isBackend', () {
+    test('バックエンド宛てなら true', () {
+      expect(ApiClient.isBackend(Uri.parse('${Constants.backendUrl}/stock/price?code=7203')), isTrue);
+    });
+
+    test('ウォッチリストの API Gateway 宛ては false', () {
+      expect(ApiClient.isBackend(Uri.parse(Constants.saveUrl)), isFalse);
+      expect(ApiClient.isBackend(Uri.parse('${Constants.getUrl}?userId=x')), isFalse);
     });
   });
 }

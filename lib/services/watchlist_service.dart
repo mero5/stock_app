@@ -19,6 +19,7 @@ import 'package:http/http.dart' as http;
 import '../config/constants.dart';
 import '../utils/stock_code.dart';
 import '../config/timeouts.dart';
+import 'api_client.dart';
 
 class WatchlistService {
   // ============================================================
@@ -62,7 +63,7 @@ class WatchlistService {
     final normalized = stocks.map(_normalize).toList();
 
     // LambdaにPOSTして保存
-    final response = await http.post(
+    final response = await ApiClient.post(
       Uri.parse(Constants.saveUrl),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({'userId': user.userId, 'stocks': normalized}),
@@ -88,7 +89,7 @@ class WatchlistService {
     final normalized = _normalize(stock);
 
     // LambdaにPOSTして削除
-    final response = await http.post(
+    final response = await ApiClient.post(
       Uri.parse(Constants.deleteUrl),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({'userId': user.userId, 'stock': normalized}),
@@ -115,7 +116,7 @@ class WatchlistService {
     final user = await Amplify.Auth.getCurrentUser();
 
     // LambdaにGETリクエストを送信
-    final response = await http.get(
+    final response = await ApiClient.get(
       Uri.parse('${Constants.getUrl}?userId=${user.userId}'),
     ).timeout(AppTimeouts.api);
 

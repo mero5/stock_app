@@ -14,3 +14,5 @@ google-api-python-client
 ephem
 jpholiday
 exchange-calendars
+# Cognito のトークン確認（JWT の署名を確かめるので crypto 付き）
+PyJWT[crypto]

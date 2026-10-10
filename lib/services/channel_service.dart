@@ -15,8 +15,8 @@
 
 import 'package:flutter/foundation.dart';
 import 'dart:convert';
-import 'package:http/http.dart' as http;
 import '../config/timeouts.dart';
+import 'api_client.dart';
 
 class ChannelService {
   // ============================================================
@@ -50,7 +50,7 @@ class ChannelService {
   static Future<List<Map<String, String>>> getChannels(String userId) async {
     debugPrint('チャンネル取得開始 userId: $userId');
     try {
-      final res = await http.get(Uri.parse('$_getUrl?userId=$userId')).timeout(AppTimeouts.api);
+      final res = await ApiClient.get(Uri.parse('$_getUrl?userId=$userId')).timeout(AppTimeouts.api);
       debugPrint('チャンネル取得レスポンス: ${res.statusCode} ${res.body}');
 
       if (res.statusCode == 200) {
@@ -94,7 +94,7 @@ class ChannelService {
     Map<String, String> channel,
   ) async {
     try {
-      final res = await http.post(
+      final res = await ApiClient.post(
         Uri.parse(_saveUrl),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
@@ -125,7 +125,7 @@ class ChannelService {
   /// 返り値：削除成功ならtrue、失敗ならfalse
   static Future<bool> deleteChannel(String userId, String channelId) async {
     try {
-      final res = await http.post(
+      final res = await ApiClient.post(
         Uri.parse(_deleteUrl),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({'userId': userId, 'channelId': channelId}),

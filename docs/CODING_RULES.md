@@ -138,7 +138,8 @@ stock_app のコードの書き方の決まり。**コードを変える前に�
 
 - **時刻・日付** → `services/clock.py` の `now_jst()` / `today_jst()` / `JST`。`datetime.now()` / `date.today()` を直接使わない
 - **外部APIの呼び出し** → 必ずタイムアウトを付ける。値は `config/timeouts.py` に定数で置く
-- **（アプリ）バックエンドへの通信** → `await http.get(...).timeout(AppTimeouts.api)` のように必ずタイムアウトを付ける（AI を使うAPIは `AppTimeouts.ai`）。値は `lib/config/timeouts.dart`
+- **（アプリ）バックエンドへの通信** → `await ApiClient.get(...).timeout(AppTimeouts.api)` のように、`ApiClient`（ログインのトークンを付ける）を使い、必ずタイムアウトを付ける（AI を使うAPIは `AppTimeouts.ai`）。`http.get` / `http.post` を直接呼ばない。値は `lib/config/timeouts.dart`
+- **（バックエンド）ユーザーごとのデータを扱う API** → 段階2からは、`userId` はリクエストの値ではなく、`request.state.auth.user_id`（確かめたトークンの持ち主）を使う
 - **yfinance の `history()` / `download()` の結果** → 必ず `services/market_data.drop_empty_rows()` を通す
 - **DynamoDB のキャッシュ** → `services/cache.py` の `cache_get()` / `cache_set()` を使う。**中身の形（項目名・単位）を変えたらキャッシュキーの版を上げる**（例：`macro` → `macro_v2`）
 - **DynamoDB の `scan`** → `Limit` は絞り込みの前に効く。ページングして、条件に合った件数で打ち切る
