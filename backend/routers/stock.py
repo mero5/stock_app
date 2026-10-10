@@ -123,6 +123,15 @@ def get_stock_name(code: str):
         for s in stocks_master:
             if s.get("Code") == search_code:
                 return {"code": code, "name": s.get("CoName", code)}
+        # 銘柄マスタに無い（取得できていない・J-Quants 無料プランで直近12週間の新規上場が載っていない）ときは
+        # yfinance の名前（英語）を使う。コードのまま出すよりは分かる
+        try:
+            info = yf.Ticker(to_yf_ticker(code)).info
+            name = info.get("longName") or info.get("shortName")
+            if name:
+                return {"code": code, "name": name}
+        except Exception as e:
+            print(f"銘柄名取得エラー（yfinance） {code}: {e}")
         return {"code": code, "name": code}
     try:
         ticker = yf.Ticker(code)

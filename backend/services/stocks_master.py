@@ -15,6 +15,7 @@
 
 import gzip
 import json
+import time
 
 import requests
 
@@ -32,14 +33,29 @@ STOCKS_MASTER_CACHE_TTL_MINUTES = 24 * 60
 # ページ送りが終わらないとき（APIの不具合）に無限に回らないための上限
 JQUANTS_MAX_PAGES = 20
 
+# J-Quants に取りに行くのは、全コンテナで同時に1つだけにする（DynamoDB を「取得中」の札にする）。
+# 2026-10-10 のデプロイ直後、起動したコンテナが一斉に J-Quants を呼んで無料プランの「1分5回」を超え（HTTP 429）、
+# 1度も取れないまま全コンテナが取り直しを続けていた。札を取れたコンテナだけが取りに行き、
+# 失敗したら札の期限まで（＝回数制限が戻るまで）どのコンテナも取りに行かない
+STOCKS_MASTER_LOCK_KEY = {"cache_key": "stocks_master_lock"}
+STOCKS_MASTER_LOCK_SEC = 120
+
 
 def _slim(master: list) -> list:
-    """使う項目（Code・CoName）だけに絞る"""
-    return [
-        {"Code": s.get("Code", ""), "CoName": s.get("CoName", "")}
-        for s in master
-        if s.get("Code")
-    ]
+    """
+    使う項目（Code・CoName）だけに絞り、銘柄コードの重複を除く
+
+    J-Quants の一覧は同じ銘柄が日付違いで何行も返ることがある（2026-10-10 に 22,210 行。上場銘柄は約4,400）。
+    重複したままだと保存が DynamoDB の1件 400KB を超えうるので、銘柄ごとに一番新しい日付（Date）の行だけ残す
+    """
+    latest = {}
+    for s in master:
+        code = s.get("Code")
+        if not code:
+            continue
+        if code not in latest or str(s.get("Date", "")) >= str(latest[code].get("Date", "")):
+            latest[code] = s
+    return [{"Code": code, "CoName": s.get("CoName", "")} for code, s in latest.items()]
 
 
 def _compress(master: list) -> bytes:
@@ -115,16 +131,44 @@ def fetch_stocks_master_from_jquants(api_key: str, http_get=requests.get) -> lis
     return _slim(loaded)
 
 
-def prepare_stocks_master(api_key: str) -> tuple[list, str]:
+def acquire_fetch_lock(table=None, now=None) -> bool:
+    """
+    「J-Quants から取得中」の札を取る。取れたら True（このコンテナだけが取りに行ってよい）
+
+    DynamoDB の条件付き書き込みで、札が無いか期限切れのときだけ書ける。
+    札は STOCKS_MASTER_LOCK_SEC 秒で切れるので、取得に失敗しても次の人が取り直せる
+    """
+    table = table or market_cache_table
+    now = int(now if now is not None else time.time())
+    try:
+        table.put_item(
+            Item={**STOCKS_MASTER_LOCK_KEY, "lock_until": now + STOCKS_MASTER_LOCK_SEC,
+                  "ttl": now + STOCKS_MASTER_LOCK_SEC + 3600},
+            ConditionExpression="attribute_not_exists(cache_key) OR lock_until < :now",
+            ExpressionAttributeValues={":now": now},
+        )
+        return True
+    except Exception as e:
+        # 条件に合わない（ほかのコンテナが取得中・回数制限の待ち）か、DynamoDB のエラー
+        print(f"銘柄マスタ：取得中の札を取れなかった（ほかのコンテナが取得中など）: {type(e).__name__}")
+        return False
+
+
+def prepare_stocks_master(api_key: str, allow_fetch: bool = True) -> tuple[list, str]:
     """
     銘柄マスタを用意する。(銘柄リスト, 取得元) を返す。取得元は "cache" / "jquants" / ""（失敗）
 
     1. DynamoDB に保存があればそれを使う（J-Quants にアクセスしない）
-    2. 無ければ J-Quants から取り、取れたら DynamoDB に保存する
+    2. 無ければ、「取得中」の札を取れたときだけ J-Quants から取り、取れたら DynamoDB に保存する
+
+    [allow_fetch] False なら 1 だけ（起動時用。Lambda の起動は約10秒で打ち切られるので、
+                  起動中に J-Quants を待たない。2026-10-10 に起動の時間切れ（INIT timeout）が出ていた）
     """
     cached = load_stocks_master_cache()
     if cached:
         return cached, "cache"
+    if not allow_fetch or not acquire_fetch_lock():
+        return [], ""
     loaded = fetch_stocks_master_from_jquants(api_key)
     if not loaded:
         return [], ""
