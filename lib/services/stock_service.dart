@@ -473,16 +473,19 @@ class StockService {
 
   /// AI予測の履歴を取得する
   ///
-  /// [code] 指定するとその銘柄の履歴だけを返す
+  /// [code]   指定するとその銘柄の履歴だけを返す
+  /// [userId] 自分の予測だけに絞る（渡さないと全ユーザーの予測が返る。K-48）
   static Future<List<Map<String, dynamic>>> getPredictionHistory({
     int limit = 30,
     String code = '',
+    String userId = '',
   }) async {
     try {
       final res = await ApiClient.get(
         Uri.parse(
           '${Constants.backendUrl}/stats/predictions'
-          '?limit=$limit&code=${Uri.encodeComponent(code)}',
+          '?limit=$limit&code=${Uri.encodeComponent(code)}'
+          '&userId=${Uri.encodeComponent(userId)}',
         ),
       ).timeout(AppTimeouts.api);
       final data = jsonDecode(res.body);

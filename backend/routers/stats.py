@@ -6,7 +6,7 @@
 # 数字で確認するための土台。
 # ===================================================
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 
 from services.predictions import (
     evaluate_pending, get_accuracy_stats, get_recent_predictions,
@@ -43,13 +43,25 @@ def run_evaluation(limit: int = 100):
 
 
 @router.get("/stats/predictions")
-def list_predictions(limit: int = 30, code: str = ""):
+def list_predictions(request: Request, limit: int = 30, code: str = "", userId: str = ""):
     """
     直近の予測履歴を返す。
 
-    [code] 指定するとその銘柄の履歴だけを返す
+    [code]   指定するとその銘柄の履歴だけを返す
+    [userId] その人の予測だけを返す（/stats/accuracy と同じ）。
+             userId を送らない古いアプリ（ビルド22以前）でも他人の予測が出ないよう、
+             ログインのトークン（#30 でアプリが付けている）が本物ならその持ち主で絞る
     """
+    user_id = userId or _token_user_id(request)
     return {
         "threshold_pct": VERDICT_THRESHOLD_PCT,
-        "predictions": get_recent_predictions(limit=limit, code=code),
+        "predictions": get_recent_predictions(limit=limit, code=code, user_id=user_id),
     }
+
+
+def _token_user_id(request: Request) -> str:
+    """確かめたトークンの持ち主（main.py のミドルウェアが request.state.auth に入れる）。無ければ空文字"""
+    auth = getattr(request.state, "auth", None)
+    if auth is not None and auth.status == "valid" and auth.user_id:
+        return auth.user_id
+    return ""
