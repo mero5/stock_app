@@ -10,7 +10,7 @@ from config.market_calendar import FOMC_DATES, BOJ_DATES, warn_if_missing
 from services.clock import today_jst
 from services.market_data import drop_empty_rows
 from services.openai_params import openai_limit_params
-from config.ai_models import OPENAI_ANALYSIS_MODEL
+from config.ai_models import OPENAI_ANALYSIS_MODEL, OPENAI_ANALYSIS_EFFORT
 
 
 router = APIRouter()
@@ -405,7 +405,7 @@ async def sector_comment(request: Request):
                 {"role": "system", "content": "あなたは株式市場のアナリストです。簡潔に日本語で答えてください。"},
                 {"role": "user", "content": prompt}
             ],
-            **openai_limit_params(OPENAI_ANALYSIS_MODEL, 300),
+            **openai_limit_params(OPENAI_ANALYSIS_MODEL, 300, OPENAI_ANALYSIS_EFFORT),
         )
         return {"comment": res.choices[0].message.content.strip()}
     except Exception as e:

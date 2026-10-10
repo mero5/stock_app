@@ -142,7 +142,7 @@ stock_app のコードの書き方の決まり。**コードを変える前に�
 - **DynamoDB のキャッシュ** → `services/cache.py` の `cache_get()` / `cache_set()` を使う。**中身の形（項目名・単位）を変えたらキャッシュキーの版を上げる**（例：`macro` → `macro_v2`）
 - **DynamoDB の `scan`** → `Limit` は絞り込みの前に効く。ページングして、条件に合った件数で打ち切る
 - **AIのプロンプトを変えた** → `services/technical.py` の `PROMPT_VERSION` を上げる
-- **OpenAI を呼ぶ** → モデル名は `config/ai_models.py` の定数を使う（直書きしない）。出力の上限は `max_tokens` を直接書かず、`services/openai_params.py` の `openai_limit_params()` を `**` で渡す（GPT-5系は `max_tokens` を受け付けず、思考トークンも上限に数えられるため）
+- **OpenAI を呼ぶ** → モデル名は `config/ai_models.py` の定数を使う（直書きしない）。出力の上限は `max_tokens` を直接書かず、`services/openai_params.py` の `openai_limit_params()` を `**` で渡す（考えるモデル（GPT-5/6系）は `max_tokens` を受け付けず、思考トークンも上限に数えられるため）。考える量も定数（`OPENAI_ANALYSIS_EFFORT` など）を渡す
 - **年ごとに変わる公式の日程など** → コードに直書きせず `config/` に切り出す
 - **APIキー・秘密の値** → `.env`（環境変数）から読む。コードやドキュメントに書かない（このリポジトリは公開）
 

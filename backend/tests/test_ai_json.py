@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 
 from config.ai_models import (
     OPENAI_ANALYSIS_MODEL, OPENAI_LIGHT_MODEL,
-    OPENAI_REASONING_EFFORT, OPENAI_REASONING_TOKEN_BUDGET,
+    OPENAI_ANALYSIS_EFFORT, OPENAI_LIGHT_EFFORT, OPENAI_REASONING_TOKEN_BUDGET,
 )
 from routers import ai
 
@@ -75,27 +75,38 @@ def test_call_openai_json_detects_truncation(use_fake_ai):
         ai.call_openai_json("p", system="s")
 
 
-def test_call_openai_json_uses_gpt5_params_by_default(use_fake_ai):
-    """既定（分析用）は GPT-5系。max_tokens は送らず、思考の分を足した上限と考える量を送る"""
+def test_call_openai_json_uses_reasoning_params_by_default(use_fake_ai):
+    """既定（分析用）は考えるモデル。max_tokens は送らず、思考の分を足した上限と考える量を送る"""
     fake = use_fake_ai('{"a": 1}')
     ai.call_openai_json("p", system="s", max_tokens=4000)
 
     call = fake.calls[0]
     assert call["model"] == OPENAI_ANALYSIS_MODEL
-    assert call["model"].startswith("gpt-5")
-    # GPT-5系に max_tokens を送ると 400 エラーになる
+    # 考えるモデルに max_tokens を送ると 400 エラーになる
     assert "max_tokens" not in call
     assert call["max_completion_tokens"] == 4000 + OPENAI_REASONING_TOKEN_BUDGET
-    assert call["reasoning_effort"] == OPENAI_REASONING_EFFORT
+    assert call["reasoning_effort"] == OPENAI_ANALYSIS_EFFORT
 
 
-def test_call_openai_json_light_model_has_no_reasoning(use_fake_ai):
-    """gpt-4o-mini（相談）には reasoning_effort を送らない（送るとエラーになる）"""
+def test_call_openai_json_light_effort(use_fake_ai):
+    """相談（一括診断）は考えない設定。思考の分は足さない"""
     fake = use_fake_ai('{"a": 1}')
-    ai.call_openai_json("p", system="s", max_tokens=3000, model=OPENAI_LIGHT_MODEL)
+    ai.call_openai_json("p", system="s", max_tokens=3000,
+                        model=OPENAI_LIGHT_MODEL, effort=OPENAI_LIGHT_EFFORT)
 
     call = fake.calls[0]
+    assert call["model"] == OPENAI_LIGHT_MODEL
     assert "max_tokens" not in call
+    assert call["reasoning_effort"] == "none"
+    assert call["max_completion_tokens"] == 3000
+
+
+def test_call_openai_json_gpt4o_has_no_reasoning(use_fake_ai):
+    """GPT-4o系に戻したときは reasoning_effort を送らない（送るとエラーになる）"""
+    fake = use_fake_ai('{"a": 1}')
+    ai.call_openai_json("p", system="s", max_tokens=3000, model="gpt-4o-mini")
+
+    call = fake.calls[0]
     assert "reasoning_effort" not in call
     assert call["max_completion_tokens"] == 3000
 
