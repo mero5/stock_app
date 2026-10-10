@@ -82,6 +82,7 @@ config/          設定値・定数（タイムアウト、お知らせ、日程
 | 現在の日時・今日の日付 | `services/clock.py` の `now_jst()` / `today_jst()` / `JST` | Lambda は UTC。日本時間 0:00〜8:59 が「前日」になる |
 | 東証の営業日・権利落ち日 | `services/tse_calendar.py` の `is_tse_business_day()` / `month_end_rights_dates()` | 土日だけで数えると、祝日・年末（12/31〜1/3）の休場で日付がずれる。exchange_calendars の東証カレンダーは約1年先までしか計算できない |
 | 外部APIのタイムアウト値 | `config/timeouts.py` | 未指定だと無限に待ち、Lambda の15分制限で落ちる |
+| 日本株の決算発表予定日 | `services/jp_earnings.py` の `get_jp_earnings_dates()`（J-Quants `/v2/fins/earnings-date`。12時間保存） | V1 の名前（`/fins/announcement`）を V2 で呼ぶと存在せず、決算日が一度も出なかった（K-47）。J-Quants の無料プランは1分5回まで。**J-Quants の API を足すときは、V2 の移行表（https://jpx-jquants.com/ja/spec/migration-v1-v2）で名前を確かめる** |
 | 日本株かどうかの判定・銘柄コードの変換 | `services/stock_code.py` の `is_jp_code()` / `to_yf_ticker()` / `to_jquants_code()`（アプリは `lib/utils/stock_code.dart` の `StockCode`） | `isdigit()` や `^\d{5}$` で判定すると、英字入りのコード（285A など）を米国株として扱ってしまう |
 | yfinance の結果の後始末 | `services/market_data.py` の `drop_empty_rows()` | 日本株は最新日が空の行で返り、株価・指標が全部 null になる |
 | 配当利回り | `services/market_data.py` の `dividend_yield_pct()`（%で返す。年間配当額 ÷ 株価） | yfinance の `dividendYield` は版によって単位（割合／%）が変わる。×100 すると「344%」になる（K-46）。詳細APIはアプリに合わせて割合で返す |
