@@ -22,3 +22,6 @@ OPENAI_MAX_RETRIES = 0
 
 # Gemini: 1回の呼び出しの上限秒数
 GEMINI_TIMEOUT_SEC = 60
+
+# FCM（プッシュ通知の送信）と、その認証トークンの取得: 1回の上限秒数
+FCM_TIMEOUT_SEC = 10

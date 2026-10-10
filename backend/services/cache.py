@@ -80,3 +80,7 @@ user_profile_table = dynamodb.Table('user_profiles')
 
 # AI予測の記録テーブル（的中率の測定用。キャッシュではないのでTTLなし）
 predictions_table  = dynamodb.Table('ai_predictions')
+# 株価アラート（ユーザーが登録した条件。キー：userId + alert_id）
+price_alerts_table = dynamodb.Table('price_alerts')
+# プッシュ通知の宛先（端末ごとの FCM トークン。キー：userId + token。ttl で自動削除）
+push_tokens_table  = dynamodb.Table('push_tokens')

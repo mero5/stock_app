@@ -15,6 +15,7 @@ import '../services/user_profile_service.dart';
 import 'profile_setup_screen.dart';
 import 'ai_stats_screen.dart';
 import 'notice_history_screen.dart';
+import 'price_alert_list_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -88,6 +89,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   const SizedBox(height: 12),
                   _buildAiStatsCard(),
                   const SizedBox(height: 12),
+                  _buildPriceAlertCard(),
+                  const SizedBox(height: 12),
                   _buildNoticeHistoryCard(),
                 ],
               ),
@@ -123,6 +126,34 @@ class _SettingsScreenState extends State<SettingsScreen> {
         onTap: () => Navigator.push(
           context,
           MaterialPageRoute(builder: (_) => const NoticeHistoryScreen()),
+        ),
+      ),
+    );
+  }
+
+  /// 株価アラート一覧への入口
+  ///
+  /// 指定の株価になったらプッシュ通知するアラートの ON/OFF・削除・テスト通知。
+  Widget _buildPriceAlertCard() {
+    return Card(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: ListTile(
+        leading: const CircleAvatar(
+          backgroundColor: Colors.green,
+          child: Icon(Icons.notifications, color: Colors.white, size: 20),
+        ),
+        title: const Text(
+          '株価アラート',
+          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+        ),
+        subtitle: const Text(
+          '指定の株価になったら通知する設定を確認する',
+          style: TextStyle(fontSize: 12),
+        ),
+        trailing: const Icon(Icons.chevron_right),
+        onTap: () => Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const PriceAlertListScreen()),
         ),
       ),
     );

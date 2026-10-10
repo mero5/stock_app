@@ -28,6 +28,7 @@ import 'market_screen.dart';
 import 'settings_screen.dart';
 import 'portfolio_screen.dart';
 import '../widgets/api_error_banner.dart';
+import '../services/push_service.dart';
 import '../widgets/stock_logo.dart';
 import '../widgets/error_dialog.dart';
 import '../widgets/notice_dialog.dart';
@@ -59,6 +60,28 @@ class _HomeScreenState extends State<HomeScreen> {
       if (!mounted) return;
       NoticeDialog.showIfUnread(context);
     });
+    _setUpPush();
+  }
+
+  /// プッシュ通知（株価アラート）の準備
+  ///
+  /// 通知をタップしたら、その銘柄の詳細画面を開く。
+  /// 通知がすでに許可されていれば、この端末の宛先をバックエンドに送り直す
+  /// （宛先は変わることがあるため。許可のダイアログはアラートを作るときに出す）
+  void _setUpPush() {
+    PushService.onOpenStock = (code, name) {
+      if (!mounted) return;
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => ChangeNotifierProvider(
+            create: (_) => DetailViewModel(),
+            child: DetailScreen(code: code, name: name),
+          ),
+        ),
+      );
+    };
+    PushService.refreshIfAuthorized().then((_) => PushService.openPending());
   }
 
   // ============================================================
@@ -86,6 +109,8 @@ class _HomeScreenState extends State<HomeScreen> {
     );
 
     if (confirmed == true) {
+      // ログアウトしたユーザーの株価アラートが、この端末に届かないようにする（ログイン中に消す）
+      await PushService.unregister();
       await Amplify.Auth.signOut();
       if (mounted) {
         Navigator.pushAndRemoveUntil(

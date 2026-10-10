@@ -12,6 +12,7 @@ import 'package:provider/provider.dart';
 import '../viewmodels/detail_viewmodel.dart';
 import '../theme/app_theme.dart';
 import '../utils/stock_code.dart';
+import '../widgets/price_alert_sheet.dart';
 
 class DetailScreen extends StatefulWidget {
   final String code;
@@ -115,6 +116,25 @@ class _DetailScreenState extends State<DetailScreen> {
         backgroundColor: Colors.white,
         foregroundColor: Colors.black,
         elevation: 1,
+        actions: [
+          // 株価アラート（指定の株価になったらプッシュ通知）を作る
+          IconButton(
+            icon: const Icon(Icons.notifications_none),
+            tooltip: '株価アラート',
+            onPressed: () async {
+              final saved = await PriceAlertSheet.show(
+                context,
+                code: widget.code,
+                name: widget.name,
+              );
+              if (saved && context.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('株価アラートを保存しました')),
+                );
+              }
+            },
+          ),
+        ],
       ),
       body: vm.isLoading
           ? const Center(child: CircularProgressIndicator())
