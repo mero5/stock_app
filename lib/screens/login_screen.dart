@@ -179,9 +179,18 @@ class _LoginScreenState extends State<LoginScreen> {
         // プロファイル確認
         final userId = await AuthService.getUserId();
         if (!mounted) return;
-        final profile = await UserProfileService.getProfile(userId!);
+        final result = await UserProfileService.fetchProfile(userId!);
         if (!mounted) return;
-        if (profile == null) {
+        if (result.status == ProfileFetchStatus.error) {
+          // 登録されているか分からないまま初回設定に進むと、既存のプロファイルを
+          // 既定値で上書きしうる（課題 K-36）。サインアウトして、もう一度ログインしてもらう
+          // （サインインしたままだと、次のログインで「既にログイン中」のエラーになるため）
+          await AuthService.signOut();
+          if (!mounted) return;
+          _showError('通信に失敗しました。時間をおいて、もう一度ログインしてください。');
+          return;
+        }
+        if (result.status == ProfileFetchStatus.notFound) {
           Navigator.pushReplacement(
             context,
             MaterialPageRoute(

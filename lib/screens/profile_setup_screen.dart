@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../services/user_profile_service.dart';
 import 'home_screen.dart';
+import '../widgets/error_dialog.dart';
 import '../widgets/notice_dialog.dart';
 
 // AI分析の優先度：項目キー → 表示名
@@ -105,8 +106,21 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
 
   Future<void> _loadExistingProfile() async {
     setState(() => _isLoadingProfile = true);
-    final profile = await UserProfileService.getProfile(widget.userId);
-    if (profile != null && mounted) {
+    final result = await UserProfileService.fetchProfile(widget.userId);
+    if (!mounted) return;
+    if (result.status == ProfileFetchStatus.error) {
+      // 読み込めないまま既定値を表示すると、保存したときに今の設定を
+      // 既定値で上書きしてしまう（課題 K-36）。知らせて画面を閉じる
+      await ErrorDialog.show(
+        context,
+        message: 'プロファイルを読み込めませんでした。時間をおいて、もう一度開いてください。',
+        detail: result.errorDetail,
+      );
+      if (mounted) Navigator.pop(context);
+      return;
+    }
+    final profile = result.profile;
+    if (profile != null) {
       setState(() {
         _investmentStyle = profile['investment_style'] ?? _investmentStyle;
         _tradeType = profile['trade_type'] ?? _tradeType;
