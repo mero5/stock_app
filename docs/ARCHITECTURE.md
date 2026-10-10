@@ -80,6 +80,7 @@ config/          設定値・定数（タイムアウト、お知らせ、日程
 | やりたいこと | 使うもの | 理由（使わないとどうなるか） |
 |---|---|---|
 | 現在の日時・今日の日付 | `services/clock.py` の `now_jst()` / `today_jst()` / `JST` | Lambda は UTC。日本時間 0:00〜8:59 が「前日」になる |
+| 東証の営業日・権利落ち日 | `services/tse_calendar.py` の `is_tse_business_day()` / `month_end_rights_dates()` | 土日だけで数えると、祝日・年末（12/31〜1/3）の休場で日付がずれる。exchange_calendars の東証カレンダーは約1年先までしか計算できない |
 | 外部APIのタイムアウト値 | `config/timeouts.py` | 未指定だと無限に待ち、Lambda の15分制限で落ちる |
 | 日本株かどうかの判定・銘柄コードの変換 | `services/stock_code.py` の `is_jp_code()` / `to_yf_ticker()` / `to_jquants_code()`（アプリは `lib/utils/stock_code.dart` の `StockCode`） | `isdigit()` や `^\d{5}$` で判定すると、英字入りのコード（285A など）を米国株として扱ってしまう |
 | yfinance の結果の後始末 | `services/market_data.py` の `drop_empty_rows()` | 日本株は最新日が空の行で返り、株価・指標が全部 null になる |
