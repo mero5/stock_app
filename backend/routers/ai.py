@@ -21,7 +21,7 @@ from services.technical import (
     resolve_sector_trend, normalize_checks, PROMPT_VERSION
 )
 from services.predictions import save_prediction, resolve_horizon_days
-from services.market_data import drop_empty_rows
+from services.market_data import drop_empty_rows, week52_range
 from services.stock_code import to_yf_ticker
 import math
 from fastapi.responses import JSONResponse
@@ -265,8 +265,8 @@ async def get_ai_analysis(code: str):
             else:
                 rsi = 100.0
 
-        high52 = round(max(highs), 2) if highs else None
-        low52  = round(min(lows),  2) if lows  else None
+        # 以前は3か月分の高値・安値を「52週」としていた（K-50）
+        high52, low52 = week52_range(info, highs, lows)
 
         per            = clean_value(info.get("trailingPE"))
         pbr            = clean_value(info.get("priceToBook"))
@@ -527,6 +527,9 @@ async def swing_analysis(request: Request):
 
         # 決算アラート判定
         earnings_alert = get_earnings_alert(earnings_date_str, period, period_days)
+        # アプリは /stock/events の配当落ち日（ex_dividend）を dividend_record_date という名前で送っている。
+        # 以前は受け取るだけで使っていなかった（K-52）。決算アラートの下に「配当落ち日」として出す
+        earnings_alert["ex_dividend_date"] = dividend_record_date or None
 
         # ── プロンプト選択 ──
         if period == "短期":

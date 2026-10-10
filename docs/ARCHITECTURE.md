@@ -83,6 +83,7 @@ config/          設定値・定数（タイムアウト、お知らせ、日程
 | 外部APIのタイムアウト値 | `config/timeouts.py` | 未指定だと無限に待ち、Lambda の15分制限で落ちる |
 | 日本株かどうかの判定・銘柄コードの変換 | `services/stock_code.py` の `is_jp_code()` / `to_yf_ticker()` / `to_jquants_code()`（アプリは `lib/utils/stock_code.dart` の `StockCode`） | `isdigit()` や `^\d{5}$` で判定すると、英字入りのコード（285A など）を米国株として扱ってしまう |
 | yfinance の結果の後始末 | `services/market_data.py` の `drop_empty_rows()` | 日本株は最新日が空の行で返り、株価・指標が全部 null になる |
+| 52週の高値・安値 | `services/market_data.py` の `week52_range()`（yfinance の `fiftyTwoWeekHigh/Low` を優先） | 手元の期間（3か月・6か月）の高値・安値を「52週」として出してしまう（K-50） |
 | DynamoDB のキャッシュ | `services/cache.py` の `cache_get()` / `cache_set()` | 期限切れの判定・Decimal 変換を毎回書くことになる |
 | AI系のエラーレスポンス | `routers/ai.py` の `classify_error()` / `error_response()` | アプリがエラーを結果として扱ってしまう |
 | OpenAI で JSON を受け取る | `routers/ai.py` の `call_openai_json()` | 途中で切れた JSON（`max_tokens` 切れ）を検出できない |
