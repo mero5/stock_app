@@ -605,6 +605,78 @@ async def swing_analysis(request: Request):
         return error_response(classify_error(e))
 
 
+# ポートフォリオ診断で、銘柄のデータを同時に取る数（yfinance を一度に叩きすぎない程度）
+PORTFOLIO_FETCH_WORKERS = 4
+
+# ポートフォリオ診断の回答（JSON）の上限トークン数
+# 1銘柄あたりの回答（確率4つの理由・価格戦略・根拠3つ・リスク3つ・サマリー5〜8文）が約1,000トークンになる。
+# 以前は銘柄数に関係なく4000で、4〜5銘柄を超えると途中で切れて「truncated」エラーになっていた
+PORTFOLIO_BASE_TOKENS = 1500
+PORTFOLIO_TOKENS_PER_HOLDING = 1200
+
+
+def portfolio_max_tokens(holding_count: int) -> int:
+    """銘柄数に合わせた回答の上限トークン数"""
+    return PORTFOLIO_BASE_TOKENS + PORTFOLIO_TOKENS_PER_HOLDING * max(1, holding_count)
+
+
+def _enrich_holding(h: dict, sector_data: dict) -> dict:
+    """保有銘柄1つに、株価・損益・テクニカル・ファンダ・セクター騰落を足す（失敗しても落とさない）"""
+    ticker_code = h.get("ticker_code", "")
+    try:
+        tech = get_technical_data(ticker_code)
+        fund = get_fundamental_data(ticker_code)
+        current_price = tech.get("price")
+
+        # 損益率計算
+        cost_price = h.get("cost_price")
+        shares = h.get("shares")
+        position = h.get("position", "買い")
+        profit_loss_pct = None
+        profit_loss_yen = None
+        if cost_price and current_price:
+            if position == "買い":
+                profit_loss_pct = round(
+                    (current_price - cost_price) / cost_price * 100, 2)
+            else:  # 空売り
+                profit_loss_pct = round(
+                    (cost_price - current_price) / cost_price * 100, 2)
+            if shares:
+                profit_loss_yen = round(
+                    (current_price - cost_price) * shares *
+                    (1 if position == "買い" else -1), 0)
+
+        return {
+            **h,
+            "current_price": current_price,
+            "profit_loss_pct": profit_loss_pct,
+            "profit_loss_yen": profit_loss_yen,
+            "rsi": tech.get("rsi"),
+            "macd": tech.get("macd"),
+            "ma5": tech.get("ma5"),
+            "ma25": tech.get("ma25"),
+            "sector":           fund.get("sector")   or "不明",
+            "industry":         fund.get("industry") or "不明",
+            "per":              fund.get("per"),
+            "pbr":              fund.get("pbr"),
+            "roe":              fund.get("roe"),
+            "revenue_growth":   fund.get("revenue_growth"),
+            "operating_margin": fund.get("operating_margin"),
+            # 長期のプロンプトで使う業績の推移。以前は渡しておらず、常に「{}」になっていた
+            "revenue_trend":    fund.get("revenue_trend") or {},
+            "op_income_trend":  fund.get("op_income_trend") or {},
+            # その銘柄の業種のセクター騰落（例：「自動車・輸送機 +1.23%（5日:-0.40%）」）。
+            # 以前はアプリが送るセクターのデータを使っておらず、
+            # 「セクター強度が最重要」と指示しながら AI にデータを渡していなかった
+            "sector_trend": resolve_sector_trend(
+                fund.get("sector"), fund.get("industry"), sector_data, ticker_code
+            ),
+        }
+    except Exception as e:
+        print(f"ポートフォリオの銘柄データ取得エラー {ticker_code}: {e}")
+        return {**h, "current_price": None, "error": str(e)}
+
+
 @router.post("/portfolio/diagnosis")
 async def portfolio_diagnosis(request: Request):
     body = await request.json()
@@ -620,52 +692,11 @@ async def portfolio_diagnosis(request: Request):
         print(f"マクロ取得エラー: {e}")
         macro = {}
 
-    # 各銘柄の株価・テクニカル取得
-    enriched = []
-    for h in holdings:
-        ticker_code = h.get("ticker_code", "")
-        try:
-            tech = get_technical_data(ticker_code)
-            fund = get_fundamental_data(ticker_code)
-            current_price = tech.get("price")
-
-            # 損益率計算
-            cost_price = h.get("cost_price")
-            shares = h.get("shares")
-            position = h.get("position", "買い")
-            profit_loss_pct = None
-            profit_loss_yen = None
-            if cost_price and current_price:
-                if position == "買い":
-                    profit_loss_pct = round(
-                        (current_price - cost_price) / cost_price * 100, 2)
-                else:  # 空売り
-                    profit_loss_pct = round(
-                        (cost_price - current_price) / cost_price * 100, 2)
-                if shares:
-                    profit_loss_yen = round(
-                        (current_price - cost_price) * shares *
-                        (1 if position == "買い" else -1), 0)
-
-            enriched.append({
-                **h,
-                "current_price": current_price,
-                "profit_loss_pct": profit_loss_pct,
-                "profit_loss_yen": profit_loss_yen,
-                "rsi": tech.get("rsi"),
-                "macd": tech.get("macd"),
-                "ma5": tech.get("ma5"),
-                "ma25": tech.get("ma25"),
-                "sector":           fund.get("sector")   or "不明",
-                "industry":         fund.get("industry") or "不明",
-                "per":              fund.get("per"),
-                "pbr":              fund.get("pbr"),
-                "roe":              fund.get("roe"),
-                "revenue_growth":   fund.get("revenue_growth"),
-                "operating_margin": fund.get("operating_margin"),
-            })
-        except Exception as e:
-            enriched.append({**h, "current_price": None, "error": str(e)})
+    # 各銘柄の株価・テクニカル・ファンダを取得（最大10銘柄。並列で取る）
+    # 以前は1銘柄ずつ順番に取っていて、銘柄が多いとアプリの120秒に間に合わないことがあった
+    sector_data = body.get("sector_data") or {}
+    with ThreadPoolExecutor(max_workers=PORTFOLIO_FETCH_WORKERS) as executor:
+        enriched = list(executor.map(lambda h: _enrich_holding(h, sector_data), holdings))
 
     # プロンプト組み立て
     # 期間別で銘柄ブロックを変える
@@ -680,6 +711,7 @@ async def portfolio_diagnosis(request: Request):
             holdings_blocks += f"""
 === {h.get('name')}（{h.get('code')}） ===
 セクター：{h.get('sector', '不明')} / 業種：{h.get('industry', '不明')}
+セクター騰落：{h.get('sector_trend', '不明')}
 取引種別：{h.get('trade_type', '現物')}　ポジション：{h.get('position', '買い')}
 現在株価：{h.get('current_price')}円　取得単価：{cost_str}　保有株数：{shares_str}
 損益率：{pl_str}{pl_yen}
@@ -695,6 +727,7 @@ ROE：{h.get('roe', '不明')}%
             holdings_blocks += f"""
 === {h.get('name')}（{h.get('code')}） ===
 セクター：{h.get('sector', '不明')} / 業種：{h.get('industry', '不明')}
+セクター騰落：{h.get('sector_trend', '不明')}
 取引種別：{h.get('trade_type', '現物')}　ポジション：{h.get('position', '買い')}
 現在株価：{h.get('current_price')}円　取得単価：{cost_str}　保有株数：{shares_str}
 損益率：{pl_str}{pl_yen}
@@ -887,7 +920,7 @@ JSONのみ出力（前置き・説明文禁止）。
         result, usage = call_openai_json(
             prompt,
             system="あなたは株式投資の専門アナリストです。必ずJSON形式のみで返してください。",
-            max_tokens=4000,
+            max_tokens=portfolio_max_tokens(len(enriched)),
         )
         result["_usage"] = usage
         result["_prompt"] = prompt
